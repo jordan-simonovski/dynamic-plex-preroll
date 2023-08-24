@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jordan-simonovski/dynamic-plex-preroll/lib/configmanager"
-	"github.com/jordan-simonovski/dynamic-plex-preroll/lib/ffmpegclient"
-	"github.com/jordan-simonovski/dynamic-plex-preroll/lib/plexclient"
-	"github.com/jordan-simonovski/dynamic-plex-preroll/lib/postergenerator"
+	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/configmanager"
+	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/ffmpegclient"
+	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/plexclient"
+	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/postergenerator"
 	"gopkg.in/gographics/imagick.v2/imagick"
 )
 
@@ -23,18 +23,19 @@ func main() {
 		DrawingWand: imagick.NewDrawingWand(),
 		PixelWand:   imagick.NewPixelWand(),
 		Output:      outputFile,
+		Period:      config.PeriodInterval.ToString(),
 	}
 
 	plexClient := plexclient.PlexClient{
-		PlexToken:       string(config.PlexToken),
+		PlexToken:       config.PlexToken,
 		PlexURL:         config.PlexURL,
-		PeriodDays:      config.PeriodDays,
+		PeriodInterval:  config.PeriodInterval.ToInt(),
 		MovieSectionId:  config.MovieSectionId,
 		TVShowSectionId: config.TVShowSectionId,
 		MaxItems:        config.MaxItems,
 	}
 
-	shows, movies, viewedErr := plexClient.GetMostViewedThisWeek()
+	shows, movies, viewedErr := plexClient.GetMostViewedContent()
 	if viewedErr != nil {
 		panic(viewedErr)
 	}
