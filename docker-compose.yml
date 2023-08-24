@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  plex-pre-roll:
+    build:
+      context: .
+    env_file: .env
+    volumes:
+      - ./pre-roll-output/:/build/output/

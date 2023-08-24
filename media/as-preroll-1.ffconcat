@@ -1,0 +1,14 @@
+ffconcat version 1.0
+file default-template/hey-1.png
+duration 2
+file default-template/hey-2.png
+duration 2
+file default-template/hey-3.png
+duration 2
+file default-template/hey-4.png
+duration 3
+file default-template/hey-5.png
+duration 3
+file out.png
+duration 8
+file common/plex-as-logo.png
