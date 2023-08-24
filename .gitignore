@@ -22,7 +22,6 @@ go.work
 
 pre-roll-output
 **/out.mp4
-plex-pre-rolls
 
 .DS_Store
 .env
