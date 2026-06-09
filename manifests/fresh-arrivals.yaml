@@ -1,0 +1,38 @@
+# "New & Unwatched": the latest additions you haven't gotten to yet. Same idea
+# as recently-added but filtered to unwatched via the existing plex.unwatched
+# provider (no new code). Run with: MANIFEST_PATH=manifests/fresh-arrivals.yaml
+name: fresh-arrivals
+resolution: 1920x1080
+fps: 24
+output: output/fresh-arrivals.mp4
+length: 18
+
+audio:
+  file: media/common/show-me-how-men-i-trust.mp3
+  mode: soundtrack
+  start: 33
+  fadeOut: { start: 13, duration: 5 }
+
+data:
+  arrivals:
+    provider: plex.unwatched
+    params: { section: "{{ .MovieSectionId }}", type: movie, sort: "addedAt:desc", limit: "8" }
+
+layouts:
+  arrivals:
+    background: { color: "#101418" }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 170, size: 96, color: white, text: "New & Unwatched" }
+      - { type: text, x: 96, y: 236, size: 44, color: "#8aa0b5", text: "Fresh additions you haven't started" }
+      - type: list
+        x: 96
+        startY: 360
+        stepY: 92
+        size: 52
+        color: "#dfe7ef"
+        source: arrivals
+        item: '{{ .Rank }}.  {{ truncate 44 .Name }}'
+
+scenes:
+  - { kind: render, layout: arrivals, duration: 18 }

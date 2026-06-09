@@ -15,6 +15,8 @@ type PlexClient struct {
 	MaxItems        int
 	// HTTPClient is optional; when nil a client with a sane timeout is used.
 	HTTPClient *http.Client
+	// Debug enables verbose request/response logging (token redacted).
+	Debug bool
 }
 
 type LibraryResponse struct {
@@ -77,59 +79,31 @@ type Location struct {
 	Path string `json:"path"`
 }
 
-type TopItems struct {
+// itemsResponse is the lean shape we actually consume from any Plex listing
+// endpoint (/library/all/top, /library/sections/{id}/all, extras). Unused
+// fields are intentionally omitted.
+type itemsResponse struct {
 	MediaContainer struct {
-		Size            int    `json:"size"`
-		AllowSync       bool   `json:"allowSync"`
-		Identifier      string `json:"identifier"`
-		MediaTagPrefix  string `json:"mediaTagPrefix"`
-		MediaTagVersion int    `json:"mediaTagVersion"`
-		Metadata        []struct {
-			RatingKey             string  `json:"ratingKey"`
-			Key                   string  `json:"key"`
-			GUID                  string  `json:"guid"`
-			Studio                string  `json:"studio"`
-			Type                  string  `json:"type"`
-			Title                 string  `json:"title"`
-			LibrarySectionTitle   string  `json:"librarySectionTitle"`
-			LibrarySectionID      int     `json:"librarySectionID"`
-			LibrarySectionKey     string  `json:"librarySectionKey"`
-			ContentRating         string  `json:"contentRating"`
-			Summary               string  `json:"summary"`
-			Index                 int     `json:"index"`
-			AudienceRating        float64 `json:"audienceRating"`
-			Year                  int     `json:"year"`
-			Thumb                 string  `json:"thumb"`
-			Art                   string  `json:"art"`
-			Theme                 string  `json:"theme,omitempty"`
-			Duration              int     `json:"duration"`
-			OriginallyAvailableAt string  `json:"originallyAvailableAt"`
-			LeafCount             int     `json:"leafCount"`
-			ViewedLeafCount       int     `json:"viewedLeafCount"`
-			ChildCount            int     `json:"childCount"`
-			AddedAt               int     `json:"addedAt"`
-			UpdatedAt             int     `json:"updatedAt"`
-			GlobalViewCount       int     `json:"globalViewCount"`
-			UserCount             int     `json:"userCount"`
-			AudienceRatingImage   string  `json:"audienceRatingImage"`
-			Genre                 []struct {
-				Tag string `json:"tag"`
-			} `json:"Genre"`
-			Country []struct {
-				Tag string `json:"tag"`
-			} `json:"Country"`
-			Role []struct {
-				Tag string `json:"tag"`
-			} `json:"Role"`
-			User []struct {
-				ID int `json:"id"`
-			} `json:"User"`
-			TitleSort       string `json:"titleSort,omitempty"`
-			Tagline         string `json:"tagline,omitempty"`
-			PrimaryExtraKey string `json:"primaryExtraKey,omitempty"`
-			Collection      []struct {
-				Tag string `json:"tag"`
-			} `json:"Collection,omitempty"`
-		} `json:"Metadata"`
+		Metadata []metadataItem `json:"Metadata"`
 	} `json:"MediaContainer"`
+}
+
+type metadataItem struct {
+	RatingKey       string      `json:"ratingKey"`
+	Title           string      `json:"title"`
+	GlobalViewCount int         `json:"globalViewCount"`
+	ViewCount       int         `json:"viewCount"`
+	ChildCount      int         `json:"childCount"`
+	Art             string      `json:"art"`
+	Thumb           string      `json:"thumb"`
+	PrimaryExtraKey string      `json:"primaryExtraKey"`
+	Media           []mediaPart `json:"Media"`
+}
+
+type mediaPart struct {
+	Part []part `json:"Part"`
+}
+
+type part struct {
+	Key string `json:"key"`
 }

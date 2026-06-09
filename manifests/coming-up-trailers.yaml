@@ -1,0 +1,55 @@
+# "Coming Up" reel: a title card, then spliced trailers for the latest
+# unwatched movies, with Men I Trust - "Show Me How" mixed UNDER the trailers'
+# own audio as a bed (seeking to the instrumental groove at ~0:12). Shows off:
+# trailer splicing + the mix audio mode + an audio start seek.
+# Run with: MANIFEST_PATH=manifests/coming-up-trailers.yaml
+name: coming-up-trailers
+resolution: 1920x1080
+fps: 24
+output: output/coming-up.mp4
+length: 0 # no hard cap; runs as long as the spliced trailers
+
+audio:
+  file: media/common/show-me-how-men-i-trust.mp3
+  mode: mix
+  start: 12
+  # Bed runs under the title card only, then fades out as the trailers (with
+  # their own audio) begin around the 5s mark.
+  fadeOut: { start: 3, duration: 2 }
+
+data:
+  picks:
+    provider: plex.trailers
+    params:
+      section: "{{ .MovieSectionId }}"
+      filter: unwatched
+      sort: "addedAt:desc"
+      limit: "3"
+
+layouts:
+  # Lower-third overlaid on each trailer clip. Transparent background so only the
+  # text composites over the video; fed the current item's fields per clip.
+  trailer-label:
+    background: { color: none }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 960, size: 72, color: white, text: "{{ .Name }}" }
+
+  title:
+    background: { color: black }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 220, size: 110, color: white, text: "Coming Up" }
+      - { type: text, x: 96, y: 300, size: 44, color: "#9a9aa6", text: "Fresh additions you haven't watched yet" }
+      - type: list
+        x: 96
+        startY: 430
+        stepY: 84
+        size: 46
+        color: "#dcdce6"
+        source: picks
+        item: '{{ .Rank }}.  {{ .Name }}'
+
+scenes:
+  - { kind: render, layout: title, duration: 5 }
+  - { kind: clips, source: picks, perClip: 8, transition: fade, label: trailer-label }

@@ -1,0 +1,44 @@
+# "90s Night": a random draw of movies from a decade. Shows off two plex.section
+# features at once: a passthrough filter (decade=1990) and random:true, which
+# samples a pool and shuffles so every run differs. Change decade to taste.
+# Run with: MANIFEST_PATH=manifests/decade-night.yaml
+name: decade-night
+resolution: 1920x1080
+fps: 24
+output: output/decade-night.mp4
+length: 18
+
+audio:
+  file: media/common/locket-crumb.mp3
+  mode: soundtrack
+  start: 25
+  fadeOut: { start: 13, duration: 5 }
+
+data:
+  picks:
+    provider: plex.section
+    params:
+      section: "{{ .MovieSectionId }}"
+      type: movie
+      decade: "1990"
+      random: "true"
+      limit: "6"
+
+layouts:
+  decade:
+    background: { color: "#161018" }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 170, size: 96, color: "#ffd36e", text: "90s Night" }
+      - { type: text, x: 96, y: 236, size: 44, color: "#b59ad0", text: "A random pull from the vault" }
+      - type: list
+        x: 96
+        startY: 360
+        stepY: 96
+        size: 54
+        color: "#efe7f5"
+        source: picks
+        item: '{{ .Rank }}.  {{ truncate 40 .Name }}'
+
+scenes:
+  - { kind: render, layout: decade, duration: 18 }

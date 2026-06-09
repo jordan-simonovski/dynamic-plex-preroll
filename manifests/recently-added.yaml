@@ -1,0 +1,38 @@
+# "Just Added" board: the newest movies on the server, regardless of watch
+# state, sorted newest-first. Shows off the generic plex.section provider.
+# Run with: MANIFEST_PATH=manifests/recently-added.yaml
+name: recently-added
+resolution: 1920x1080
+fps: 24
+output: output/recently-added.mp4
+length: 18
+
+audio:
+  file: media/common/locket-crumb.mp3
+  mode: soundtrack
+  start: 25
+  fadeOut: { start: 13, duration: 5 }
+
+data:
+  fresh:
+    provider: plex.section
+    params: { section: "{{ .MovieSectionId }}", type: movie, sort: "addedAt:desc", limit: "8" }
+
+layouts:
+  recent:
+    background: { color: "#0d0f14" }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 170, size: 96, color: white, text: "Just Added" }
+      - { type: text, x: 96, y: 236, size: 44, color: "#8aa0b5", text: "Fresh on the server" }
+      - type: list
+        x: 96
+        startY: 360
+        stepY: 92
+        size: 52
+        color: "#dfe7ef"
+        source: fresh
+        item: '{{ .Rank }}.  {{ truncate 44 .Name }}'
+
+scenes:
+  - { kind: render, layout: recent, duration: 18 }

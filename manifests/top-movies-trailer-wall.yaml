@@ -1,0 +1,42 @@
+# Top movies list over a muted, dimmed wall of THEIR OWN trailers. A single data
+# source (plex.top with trailers:true) supplies both the ranked text and the
+# background: trailers:true resolves each top movie's trailer URL, so the wall
+# matches the list. Run with: MANIFEST_PATH=manifests/top-movies-trailer-wall.yaml
+name: top-movies-trailer-wall
+resolution: 1920x1080
+fps: 24
+output: output/top-movies-trailer-wall.mp4
+length: 16
+
+audio:
+  file: media/common/locket-crumb.mp3
+  mode: soundtrack
+  start: 25
+  fadeOut: { start: 11, duration: 5 }
+
+data:
+  topMovies:
+    provider: plex.top
+    params: { type: movie, section: "{{ .MovieSectionId }}", period: "{{ .PeriodInterval }}", limit: "5", trailers: "true" }
+
+layouts:
+  # Background:none so only the text composites over the trailer montage.
+  top-over-trailers:
+    background: { color: none }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 150, size: 96, color: white, text: "Top Movies — {{ upper .Period }}" }
+      - type: list
+        x: 96
+        startY: 320
+        stepY: 96
+        size: 56
+        color: white
+        source: topMovies
+        item: '{{ .Rank }}.  {{ truncate 36 .Name }}'
+
+scenes:
+  - kind: render
+    layout: top-over-trailers
+    duration: 16
+    background: { source: topMovies, mode: trailers, tile: grid, dim: 0.35 }
