@@ -1,0 +1,39 @@
+# TV-only countdown over Men I Trust - "Show Me How". Seeks to ~0:33 on the
+# vocal hook. Shows off: a single-column "just TV" frame, an audio start seek,
+# a subtitle line, and the lower template helper.
+# Run with: MANIFEST_PATH=manifests/top-shows-show-me-how.yaml
+name: top-shows-show-me-how
+resolution: 1920x1080
+fps: 24
+output: output/top-shows.mp4
+length: 20
+
+audio:
+  file: media/common/show-me-how-men-i-trust.mp3
+  mode: soundtrack
+  start: 33
+  fadeOut: { start: 15, duration: 5 }
+
+data:
+  topShows:
+    provider: plex.top
+    params: { type: show, section: "{{ .TVShowSectionId }}", period: "{{ .PeriodInterval }}", limit: "8" }
+
+layouts:
+  shows:
+    background: { color: "#12141a" }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 170, size: 96, color: white, text: "What You're Watching" }
+      - { type: text, x: 96, y: 236, size: 44, color: "#8aa0b5", text: "Top shows this {{ lower .Period }}" }
+      - type: list
+        x: 96
+        startY: 360
+        stepY: 92
+        size: 52
+        color: "#dfe7ef"
+        source: topShows
+        item: '{{ .Rank }}.  {{ .Name }}'
+
+scenes:
+  - { kind: render, layout: shows, duration: 20 }

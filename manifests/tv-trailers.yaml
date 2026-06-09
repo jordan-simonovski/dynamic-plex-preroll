@@ -1,0 +1,51 @@
+# "On TV": a title card, then spliced trailers for the latest unwatched TV shows,
+# each clip labelled with the show title, over a soundtrack bed that drops out as
+# the trailers begin. The TV counterpart to coming-up-trailers.
+# Run with: MANIFEST_PATH=manifests/tv-trailers.yaml
+name: tv-trailers
+resolution: 1920x1080
+fps: 24
+output: output/tv-trailers.mp4
+length: 0 # no hard cap; runs as long as the spliced trailers
+
+audio:
+  file: media/common/vano-adult-swim.mp3
+  mode: mix
+  # Bed runs under the title card only, then fades out as the trailers begin.
+  fadeOut: { start: 3, duration: 2 }
+
+data:
+  picks:
+    provider: plex.trailers
+    params:
+      section: "{{ .TVShowSectionId }}"
+      type: show
+      filter: unwatched
+      sort: "addedAt:desc"
+      limit: "3"
+
+layouts:
+  title:
+    background: { color: black }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 220, size: 110, color: white, text: "On TV" }
+      - { type: text, x: 96, y: 300, size: 44, color: "#9a9aa6", text: "New shows you haven't started yet" }
+      - type: list
+        x: 96
+        startY: 430
+        stepY: 84
+        size: 46
+        color: "#dcdce6"
+        source: picks
+        item: '{{ .Rank }}.  {{ .Name }}'
+
+  trailer-label:
+    background: { color: none }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 960, size: 72, color: white, text: "{{ .Name }}" }
+
+scenes:
+  - { kind: render, layout: title, duration: 5 }
+  - { kind: clips, source: picks, perClip: 8, transition: fade, label: trailer-label }

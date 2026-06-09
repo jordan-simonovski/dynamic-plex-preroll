@@ -1,0 +1,45 @@
+# "Double Feature": a movie trailer block, then a TV trailer block, each clip
+# labelled with its title. Uses mode:original so every trailer plays its own
+# audio with no music bed. Run with: MANIFEST_PATH=manifests/double-feature.yaml
+name: double-feature
+resolution: 1920x1080
+fps: 24
+output: output/double-feature.mp4
+length: 0 # runs as long as the spliced trailers
+
+audio:
+  mode: original
+
+data:
+  movieTrailers:
+    provider: plex.trailers
+    params: { section: "{{ .MovieSectionId }}", type: movie, filter: unwatched, sort: "addedAt:desc", limit: "2" }
+  showTrailers:
+    provider: plex.trailers
+    params: { section: "{{ .TVShowSectionId }}", type: show, filter: unwatched, sort: "addedAt:desc", limit: "2" }
+
+layouts:
+  title:
+    background: { color: black }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 960, y: 520, size: 120, color: white, align: center, text: "Double Feature" }
+      - { type: text, x: 960, y: 620, size: 44, color: "#9a9aa6", align: center, text: "Tonight's coming attractions" }
+
+  intermission:
+    background: { color: black }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 960, y: 560, size: 96, color: white, align: center, text: "...and on TV" }
+
+  trailer-label:
+    background: { color: none }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 960, size: 72, color: white, text: "{{ .Name }}" }
+
+scenes:
+  - { kind: render, layout: title, duration: 4 }
+  - { kind: clips, source: movieTrailers, perClip: 8, label: trailer-label }
+  - { kind: render, layout: intermission, duration: 3 }
+  - { kind: clips, source: showTrailers, perClip: 8, label: trailer-label }

@@ -1,0 +1,39 @@
+# Example manifest demonstrating trailer splicing. Renders a title card, then
+# splices 6s of each of the top unwatched movies' trailers, using the trailers'
+# original audio. Run with: MANIFEST_PATH=manifests/trailers-example.yaml
+name: unwatched-trailers
+resolution: 1920x1080
+fps: 24
+output: output/trailers.mp4
+length: 0 # no hard cap; runs as long as the spliced clips
+
+audio:
+  mode: original # keep each trailer's own audio
+
+data:
+  pickedMovies:
+    provider: plex.trailers
+    params:
+      section: "{{ .MovieSectionId }}"
+      filter: unwatched
+      sort: "addedAt:desc"
+      limit: "4"
+
+layouts:
+  title:
+    background: { color: black }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 80, y: 200, size: 90, color: white, text: "Coming Up: Unwatched Picks" }
+      - type: list
+        x: 80
+        startY: 360
+        stepY: 90
+        size: 48
+        color: white
+        source: pickedMovies
+        item: "{{ .Rank }}. {{ .Name }}"
+
+scenes:
+  - { kind: render, layout: title, duration: 5 }
+  - { kind: clips, source: pickedMovies, perClip: 6, transition: fade }

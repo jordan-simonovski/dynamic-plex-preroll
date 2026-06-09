@@ -67,6 +67,11 @@ type Config struct {
 	PeriodInterval  Period `envconfig:"PERIOD_INTERVAL" required:"true"`
 	MovieSectionId  string `envconfig:"MOVIE_SECTION_ID" required:"true"`
 	TVShowSectionId string `envconfig:"TV_SHOW_SECTION_ID" required:"true"`
+	Debug           bool   `envconfig:"DEBUG" default:"false"`
+	// PlexInsecure skips TLS certificate verification. Plex serves a
+	// *.plex.direct cert with no IP SAN, so connecting to a bare IP over HTTPS
+	// fails verification. Enable only on a trusted network.
+	PlexInsecure bool `envconfig:"PLEX_INSECURE" default:"false"`
 }
 
 // MustReadConfig Returns a shallow copy of application configuration. Panics if the configuration is invalid.

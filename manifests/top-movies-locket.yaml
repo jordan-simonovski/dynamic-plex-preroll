@@ -1,0 +1,38 @@
+# Movies-only countdown over Crumb - "Locket". Seeks to ~0:25 where the main
+# groove settles, with a 5s tail fade. Shows off: a single-column "just movies"
+# frame, an audio start seek, a tinted background, and the truncate/pluralize
+# template helpers. Run with: MANIFEST_PATH=manifests/top-movies-locket.yaml
+name: top-movies-locket
+resolution: 1920x1080
+fps: 24
+output: output/top-movies.mp4
+length: 22
+
+audio:
+  file: media/common/locket-crumb.mp3
+  mode: soundtrack
+  start: 25
+  fadeOut: { start: 17, duration: 5 }
+
+data:
+  topMovies:
+    provider: plex.top
+    params: { type: movie, section: "{{ .MovieSectionId }}", period: "{{ .PeriodInterval }}", limit: "8" }
+
+layouts:
+  movies:
+    background: { color: "#0b0b14" }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 170, size: 96, color: "#f5f5f5", text: "Top Movies — {{ upper .Period }}" }
+      - type: list
+        x: 96
+        startY: 320
+        stepY: 92
+        size: 52
+        color: "#c9c9d4"
+        source: topMovies
+        item: '{{ .Rank }}.  {{ truncate 40 .Name }}   ({{ .Views }} {{ pluralize .Views "play" "plays" }})'
+
+scenes:
+  - { kind: render, layout: movies, duration: 22 }

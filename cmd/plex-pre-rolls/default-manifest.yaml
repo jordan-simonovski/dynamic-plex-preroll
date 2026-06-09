@@ -1,0 +1,66 @@
+# Built-in default manifest. Reproduces the original "Adult Swim" pre-roll:
+# intro cards -> generated top-stuff frame -> logo, over the vano soundtrack,
+# capped at 25s with a 5s audio fade. The intro cards (previously the static
+# hey-*.png files) are now rendered from the reusable `card` layout, fed
+# per-scene text via `vars`. Section ids / period come from env via the
+# template variables seeded in main.
+name: adult-swim-top-stuff
+resolution: 1920x1080
+fps: 24
+output: output/out.mp4
+length: 25
+
+audio:
+  file: media/common/vano-adult-swim.mp3
+  mode: soundtrack
+  fadeOut: { start: 20, duration: 5 }
+
+data:
+  topShows:
+    provider: plex.top
+    params: { type: show, section: "{{ .TVShowSectionId }}", period: "{{ .PeriodInterval }}", limit: "{{ .MaxItems }}" }
+  topMovies:
+    provider: plex.top
+    params: { type: movie, section: "{{ .MovieSectionId }}", period: "{{ .PeriodInterval }}", limit: "{{ .MaxItems }}" }
+
+layouts:
+  # Reusable bumper card: bold white text centred on black. Fed per-scene text
+  # via `vars.Line`; multi-line strings (\n) stack and centre on Y.
+  card:
+    background: { color: black }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 960, y: 560, size: 96, color: white, align: center, text: "{{ .Line }}" }
+
+  top-stuff:
+    background: { color: black }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 80, y: 150, size: 80, color: white, text: "Top Stuff of the {{ .Period }}" }
+      - { type: text, x: 80, y: 300, size: 60, color: white, text: "TV Shows" }
+      - type: list
+        x: 80
+        startY: 400
+        stepY: 100
+        size: 48
+        color: white
+        source: topShows
+        item: '{{ .Rank }}. {{ .Name }} - {{ .Views }} {{ pluralize .Views "view" "views" }}'
+      - { type: text, x: 900, y: 300, size: 60, color: white, text: "Movies" }
+      - type: list
+        x: 900
+        startY: 400
+        stepY: 100
+        size: 48
+        color: white
+        source: topMovies
+        item: '{{ .Rank }}. {{ .Name }} - {{ .Views }} {{ pluralize .Views "view" "views" }}'
+
+scenes:
+  - { kind: render, layout: card, duration: 2, vars: { Line: "hey" } }
+  - { kind: render, layout: card, duration: 2, vars: { Line: "hey, you" } }
+  - { kind: render, layout: card, duration: 2, vars: { Line: "yes, you!" } }
+  - { kind: render, layout: card, duration: 3, vars: { Line: "wanna see what\neveryone's been\nwatching?" } }
+  - { kind: render, layout: card, duration: 3, vars: { Line: "well, you're\ngonna see it\nanyway" } }
+  - { kind: render, layout: top-stuff, duration: 8 }
+  - { kind: image,  file: media/common/plex-as-logo.png, duration: 5 }
