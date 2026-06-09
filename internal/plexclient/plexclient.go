@@ -7,95 +7,105 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/postergenerator"
+	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/content"
 )
 
-func (client *PlexClient) GetMostViewedContent() (shows postergenerator.Shows, movies postergenerator.Movies, err error) {
-	timeMinusPeriod := time.Now().AddDate(0, 0, -client.PeriodInterval)
-	topItems := "/library/all/top"
-	params := url.Values{
-		"limit":     []string{fmt.Sprint(client.MaxItems)},
-		"viewedAt>": []string{fmt.Sprint(timeMinusPeriod.Unix())},
-	}
+const topItemsPath = "/library/all/top"
 
-	tvShowParams := params
-	tvShowParams.Add("type", client.TVShowSectionId)
+var defaultHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-	tvShowResponse, err := client.GetURL(topItems, tvShowParams)
+// GetMostViewedContent returns the most-viewed shows and movies within the
+// configured period.
+func (client *PlexClient) GetMostViewedContent() (shows, movies content.Items, err error) {
+	since := time.Now().AddDate(0, 0, -client.PeriodInterval).Unix()
+
+	shows, err = client.topItems(client.TVShowSectionId, since)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	shows = postergenerator.Shows{}
-	if tvShowResponse.StatusCode == http.StatusOK {
-		var tvShowItems TopItems
-		err = json.NewDecoder(tvShowResponse.Body).Decode(&tvShowItems)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, item := range tvShowItems.MediaContainer.Metadata {
-			shows = append(shows, postergenerator.Show{Name: item.Title, Views: item.GlobalViewCount})
-		}
-	}
-
-	defer tvShowResponse.Body.Close()
-
-	movieParams := params
-	movieParams.Add("type", client.MovieSectionId)
-
-	movieResponse, err := client.GetURL(topItems, movieParams)
+	movies, err = client.topItems(client.MovieSectionId, since)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	movies = postergenerator.Movies{}
-	if movieResponse.StatusCode == http.StatusOK {
-		var movieItems TopItems
-		err = json.NewDecoder(movieResponse.Body).Decode(&movieItems)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, item := range movieItems.MediaContainer.Metadata {
-			movies = append(movies, postergenerator.Movie{Name: item.Title, Views: item.GlobalViewCount})
-		}
 	}
 
 	return shows, movies, nil
 }
 
-func (client *PlexClient) GetLibrarySectionIds() {
-	libraryURI := "/library/sections"
-	resp, err := client.GetURL(libraryURI, url.Values{})
-	if err != nil {
-		panic(err)
+// topItems fetches the top-viewed entries of a single section type. Each call
+// builds its own query so requests never share (and corrupt) parameter state.
+func (client *PlexClient) topItems(sectionType string, since int64) (content.Items, error) {
+	params := url.Values{
+		"limit":     {fmt.Sprint(client.MaxItems)},
+		"viewedAt>": {fmt.Sprint(since)},
+		"type":      {sectionType},
 	}
 
-	if resp.StatusCode == http.StatusOK {
-		var libraryResponse LibraryResponse
-		err = json.NewDecoder(resp.Body).Decode(&libraryResponse)
-		if err != nil {
-			panic(err)
-		}
-		for _, directory := range libraryResponse.MediaContainer.Directory {
-			fmt.Println(directory.Key, directory.Title)
-		}
+	resp, err := client.GetURL(topItemsPath, params)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("plex: unexpected status %d for type %q", resp.StatusCode, sectionType)
+	}
+
+	var top TopItems
+	if err := json.NewDecoder(resp.Body).Decode(&top); err != nil {
+		return nil, err
+	}
+
+	items := make(content.Items, 0, len(top.MediaContainer.Metadata))
+	for _, m := range top.MediaContainer.Metadata {
+		items = append(items, content.Item{Name: m.Title, Views: m.GlobalViewCount})
+	}
+	return items, nil
 }
 
-func (client *PlexClient) GetURL(urlPath string, params url.Values) (resp *http.Response, err error) {
-	params.Add("X-Plex-Token", string(client.PlexToken))
-	url := client.PlexURL + urlPath + "?" + params.Encode()
+// GetLibrarySectionIds prints the available library sections. Diagnostic helper.
+func (client *PlexClient) GetLibrarySectionIds() error {
+	resp, err := client.GetURL("/library/sections", url.Values{})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
-	// create a new request with headers
-	req, err := http.NewRequest("GET", url, nil)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("plex: unexpected status %d", resp.StatusCode)
+	}
+
+	var libraryResponse LibraryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&libraryResponse); err != nil {
+		return err
+	}
+	for _, directory := range libraryResponse.MediaContainer.Directory {
+		fmt.Println(directory.Key, directory.Title)
+	}
+	return nil
+}
+
+// GetURL issues an authenticated GET against the Plex server. The supplied
+// params are not mutated; the auth token is added to a local copy.
+func (client *PlexClient) GetURL(urlPath string, params url.Values) (*http.Response, error) {
+	query := make(url.Values, len(params)+1)
+	for key, values := range params {
+		query[key] = values
+	}
+	query.Set("X-Plex-Token", string(client.PlexToken))
+
+	req, err := http.NewRequest(http.MethodGet, client.PlexURL+urlPath+"?"+query.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
+
+	return client.httpClient().Do(req)
+}
+
+func (client *PlexClient) httpClient() *http.Client {
+	if client.HTTPClient != nil {
+		return client.HTTPClient
 	}
-	return resp, nil
+	return defaultHTTPClient
 }

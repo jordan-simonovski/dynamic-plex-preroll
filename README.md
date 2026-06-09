@@ -7,6 +7,15 @@ Experimenting with generating dynamic plex pre-rolls
 CGO_CFLAGS_ALLOW='-Xpreprocessor' go build ./cmd/plex-pre-rolls
 ```
 
+## Running Tests
+
+The domain logic (`content`, `configmanager`, `plexclient`) has no CGO
+dependency, so it tests without ImageMagick installed:
+
+```
+go test ./internal/content/... ./internal/configmanager/... ./internal/plexclient/...
+```
+
 ## Manual ffmpeg steps (while I work on getting this working in ffmpeg-go)
 
 Generating Raw Output:

@@ -1,6 +1,8 @@
 package plexclient
 
 import (
+	"net/http"
+
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/configmanager"
 )
 
@@ -11,6 +13,8 @@ type PlexClient struct {
 	TVShowSectionId string
 	MovieSectionId  string
 	MaxItems        int
+	// HTTPClient is optional; when nil a client with a sane timeout is used.
+	HTTPClient *http.Client
 }
 
 type LibraryResponse struct {

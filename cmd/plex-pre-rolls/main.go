@@ -1,4 +1,3 @@
-// Port of http://members.shaw.ca/el.supremo/MagickWand/resize.htm to Go
 package main
 
 import (
