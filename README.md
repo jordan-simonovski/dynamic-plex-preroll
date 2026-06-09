@@ -1,37 +1,106 @@
 # dynamic-plex-preroll
-Experimenting with generating dynamic plex pre-rolls 
 
-## Building Binary
+Personalised, data-driven pre-rolls for your Plex server. Instead of bolting the
+same static clip in front of every play, this generates short videos from what is
+actually on *your* server right now: the top-watched titles of the month, fresh
+arrivals, your collections, spliced trailers of stuff nobody has watched yet.
+
+You describe the pre-roll once in a small YAML manifest. The tool pulls live data
+from Plex, renders the frames, splices any trailers, mixes a soundtrack, and
+writes a finished `.mp4`. Point Plex at the output and your server greets people
+with something made for it.
+
+It is a single Go binary (plus ImageMagick and ffmpeg for rendering), runs from a
+`docker compose up`, and ships with a dozen example manifests you can use as-is or
+tweak.
+
+## What you can build
+
+The bundled manifests under [manifests/](manifests/) are working examples, not
+just demos. Each is a different pre-roll concept:
+
+- `top-movies-locket.yaml` / `top-shows-show-me-how.yaml` — a countdown of your
+  most-watched movies or shows for the period, scored to a track.
+- `top-movies-trailer-wall.yaml` / `top-shows-trailer-wall.yaml` — the top list
+  over a moving wall of those titles' own trailers.
+- `recently-added.yaml` / `fresh-arrivals.yaml` — "new this week" cards driven by
+  what you actually added.
+- `coming-up-trailers.yaml` / `tv-trailers.yaml` / `trailers-example.yaml` —
+  title card, then real trailers of unwatched picks spliced back to back.
+- `double-feature.yaml` — two random titles framed as tonight's double bill.
+- `decade-night.yaml` — a themed night pulled from a single decade.
+- `collections.yaml` — your movie collections with their title counts.
+
+Swap the soundtrack, change the limit, point it at a different library, and it is
+a new pre-roll. No re-rendering PNGs, no video editor.
+
+## Quick start
+
+You need a `.env` (see [Configuration](#configuration)) and Docker.
+
+```
+docker compose up
+```
+
+That renders the built-in default pre-roll and drops the `.mp4` in
+`pre-roll-output/`. To render one of the examples instead, set `MANIFEST_PATH`
+(single) or `MANIFEST_DIR` (batch) in your `.env`:
+
+```
+MANIFEST_PATH=manifests/top-movies-locket.yaml
+# or render every manifest in a folder in one run:
+MANIFEST_DIR=manifests
+```
+
+### Wiring the output into Plex
+
+Plex Pass servers have a pre-roll setting (Settings → Extras → *Pre-roll video*).
+Put the path to a generated `.mp4` there. List several paths separated by a comma
+to have Plex pick one at random per play, or a semicolon to play them in
+sequence. Render a batch with `MANIFEST_DIR` and you have a rotating set that
+stays current as your library changes — re-run on a schedule to refresh it.
+
+## Building the binary
+
+If you would rather run it directly than via Docker:
 
 ```
 CGO_CFLAGS_ALLOW='-Xpreprocessor' go build ./cmd/plex-pre-rolls
 ```
 
-## Pre-roll manifests (the DSL)
-
-A pre-roll is described by a YAML manifest: global settings, named data
-sources, reusable layouts, a soundtrack, and an ordered scene list. Every
-text/string field is a Go `text/template`, so content is driven by the data
-pulled from Plex.
-
-Select a manifest with the `-manifest` flag or the `MANIFEST_PATH` env var. If
-neither is set, the embedded default
-([cmd/plex-pre-rolls/default-manifest.yaml](cmd/plex-pre-rolls/default-manifest.yaml))
-reproduces the original "top stuff" pre-roll.
-
 ```
 go run ./cmd/plex-pre-rolls -manifest manifests/trailers-example.yaml
 ```
 
+Select a manifest with the `-manifest` flag / `MANIFEST_PATH`, or a directory
+with `-manifest-dir` / `MANIFEST_DIR` (batch mode wins if both are set). With
+neither, the embedded default
+([cmd/plex-pre-rolls/default-manifest.yaml](cmd/plex-pre-rolls/default-manifest.yaml))
+renders the original "top stuff" pre-roll. In batch mode one bad manifest is
+logged and skipped; the run still exits non-zero if anything failed.
+
+## Pre-roll manifests (the DSL)
+
+A pre-roll is described by a YAML manifest: global settings, named data sources,
+reusable layouts, a soundtrack, and an ordered scene list. Every text/string
+field is a Go `text/template`, so content is driven by the data pulled from Plex.
+
 ### Data sources (providers)
 
-Sources are resolved by named providers and exposed to templates under their
-data key:
+Sources are resolved by named providers and exposed to templates under their data
+key:
 
-- `plex.top` — most-viewed items (`type`, `period`, `limit`).
-- `plex.unwatched` — unwatched items in a section (`section`, `type`, `sort`, `limit`).
+- `plex.top` — most-viewed items (`type`, `section`, `period`, `limit`); set
+  `trailers: true` to also resolve each item's trailer URL.
+- `plex.unwatched` — unwatched items in a section (`section`, `type`, `sort`,
+  `limit`).
 - `plex.trailers` — resolves a streamable trailer URL per candidate item
   (`section`, `filter`, `sort`, `limit`).
+- `plex.section` — general section listing; supports `random: true` and passes
+  any unrecognised param through as a Plex filter (e.g. `decade=1990`,
+  `year>>=2000`).
+- `plex.collections` — collections in a section, each child count exposed as
+  `Views` (`section`, `sort`, `limit`).
 
 Add a provider in `internal/providers` and reference it from a manifest; no
 engine changes required.
@@ -41,54 +110,49 @@ engine changes required.
 - `image` — a still shown for `duration` seconds.
 - `render` — a `layout` drawn to a frame via ImageMagick, shown for `duration`.
   A render scene may supply `vars` (a string map) that are merged into the
-  layout's template context, so one layout can be reused with different text.
-- `clips` — splices `perClip` seconds of each item's media (e.g. trailers) from
-  a data `source`.
+  layout's template context, so one layout can be reused with different text. A
+  render scene can also take a `background` sourced from data (e.g. a dimmed grid
+  of posters).
+- `clips` — splices `perClip` seconds of each item's media (e.g. trailers) from a
+  data `source`.
 
 Text elements support `align` (`left`/`center`/`right`) and multi-line strings
 (`\n`), with each block centred vertically on its `y`. The built-in manifest's
 intro bumpers ("hey", "hey, you", ...) are generated this way: a single `card`
-layout fed per-scene `vars.Line`, so similar text sequences are trivial to add
-to any manifest without pre-rendering PNGs.
+layout fed per-scene `vars.Line`, so similar text sequences are trivial to add to
+any manifest without pre-rendering PNGs.
 
-`audio.mode` controls how the soundtrack interacts with clip audio
-(`soundtrack` replaces, `original` keeps clip audio, `mix` blends).
-`audio.start` seeks into the track (seconds) so a manifest can drop in on a
-hook instead of the intro; `audio.fadeOut` is output-relative.
+`audio.mode` controls how the soundtrack interacts with clip audio (`soundtrack`
+replaces, `original` keeps clip audio, `mix` blends). `audio.start` seeks into the
+track (seconds) so a manifest can drop in on a hook instead of the intro;
+`audio.fadeOut` is output-relative.
 
-Example manifests live under [manifests/](manifests/):
+## Configuration
 
-- `top-movies-locket.yaml` — movies-only countdown, Crumb "Locket" from 0:25.
-- `top-shows-show-me-how.yaml` — TV-only countdown, Men I Trust "Show Me How" from 0:33.
-- `coming-up-trailers.yaml` — title card + spliced unwatched trailers with the soundtrack mixed under.
-- `trailers-example.yaml` — minimal trailer-splicing example.
-
-## Running Tests
-
-Everything except the ImageMagick layout interpreter (`internal/render`) and
-the `cmd` entrypoint is CGO-free. With ImageMagick installed, the whole suite
-runs:
+Configuration is read from the environment (Docker reads it from `.env`):
 
 ```
-go test ./...
+.env
+=================
+PLEX_TOKEN=""                  # see "Getting a Plex token" below
+PLEX_URL="http://localhost:32400"
+MAX_ITEMS=5
+PERIOD_INTERVAL="MONTH"        # DAY, WEEK, MONTH or YEAR
+MOVIE_SECTION_ID="1"
+TV_SHOW_SECTION_ID="2"
+# optional:
+# MANIFEST_PATH=manifests/top-movies-locket.yaml
+# MANIFEST_DIR=manifests
+# DEBUG=true
+# PLEX_INSECURE=true           # skip TLS verification; trusted networks only
 ```
 
-Without ImageMagick, test the CGO-free packages directly (the `render` package
-won't build without it):
+`MAX_ITEMS`, `PERIOD_INTERVAL`, and the section ids are seeded into the template
+context (as `MaxItems`, `Period`/`PeriodInterval`, `MovieSectionId`,
+`TVShowSectionId`), so manifests can reference your settings instead of
+hard-coding them.
 
-```
-go test ./internal/manifest/... ./internal/templating/... ./internal/content/... \
-  ./internal/configmanager/... ./internal/plexclient/... ./internal/providers/... \
-  ./internal/pipeline/... ./internal/engine/...
-```
-
-The real rendering path has an opt-in smoke test (requires ImageMagick):
-
-```
-go test -tags imagick ./internal/render/...
-```
-
-## Getting a Plex Token
+## Getting a Plex token
 
 `PLEX_TOKEN` is an authenticated session token for your Plex account. The
 `plex-token` CLI fetches one by signing in to plex.tv:
@@ -110,21 +174,26 @@ Only the token is written to stdout, so you can pipe it straight into `.env`:
 echo "PLEX_TOKEN=\"$(go run ./cmd/plex-token -login you@example.com)\"" >> .env
 ```
 
-## Running via Docker 
+## Running tests
 
-You'll need a .env file
-
-```
-.env
-=================
-PLEX_TOKEN=""
-PLEX_URL="http://localhost:32400"
-MAX_ITEMS=5
-PERIOD_INTERVAL="MONTH" # DAY, WEEK, MONTH or YEAR
-MOVIE_SECTION_ID="1"
-TV_SHOW_SECTION_ID="2"
-```
+Everything except the ImageMagick layout interpreter (`internal/render`) and the
+`cmd` entrypoint is CGO-free. With ImageMagick installed, the whole suite runs:
 
 ```
-docker compose up
+go test ./...
+```
+
+Without ImageMagick, test the CGO-free packages directly (the `render` package
+won't build without it):
+
+```
+go test ./internal/manifest/... ./internal/templating/... ./internal/content/... \
+  ./internal/configmanager/... ./internal/plexclient/... ./internal/providers/... \
+  ./internal/pipeline/... ./internal/engine/...
+```
+
+The real rendering path has an opt-in smoke test (requires ImageMagick):
+
+```
+go test -tags imagick ./internal/render/...
 ```
