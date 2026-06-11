@@ -91,6 +91,8 @@ type itemsResponse struct {
 type metadataItem struct {
 	RatingKey       string      `json:"ratingKey"`
 	Title           string      `json:"title"`
+	GUID            string      `json:"guid"`
+	Type            string      `json:"type"`
 	GlobalViewCount int         `json:"globalViewCount"`
 	ViewCount       int         `json:"viewCount"`
 	ChildCount      int         `json:"childCount"`
@@ -98,6 +100,18 @@ type metadataItem struct {
 	Thumb           string      `json:"thumb"`
 	PrimaryExtraKey string      `json:"primaryExtraKey"`
 	Media           []mediaPart `json:"Media"`
+}
+
+// hubsResponse is the lean shape consumed from hub listing endpoints
+// (e.g. Discover's /hubs/sections/home).
+type hubsResponse struct {
+	MediaContainer struct {
+		Hub []struct {
+			Title         string         `json:"title"`
+			HubIdentifier string         `json:"hubIdentifier"`
+			Metadata      []metadataItem `json:"Metadata"`
+		} `json:"Hub"`
+	} `json:"MediaContainer"`
 }
 
 type mediaPart struct {

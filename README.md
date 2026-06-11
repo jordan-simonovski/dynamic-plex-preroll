@@ -30,6 +30,8 @@ just demos. Each is a different pre-roll concept:
 - `double-feature.yaml` — two random titles framed as tonight's double bill.
 - `decade-night.yaml` — a themed night pulled from a single decade.
 - `collections.yaml` — your movie collections with their title counts.
+- `watchlist.yaml` — titles from your Plex watchlist that are already on the
+  server ("already here, no excuses").
 
 Swap the soundtrack, change the limit, point it at a different library, and it is
 a new pre-roll. No re-rendering PNGs, no video editor.
@@ -101,6 +103,17 @@ key:
   `year>>=2000`).
 - `plex.collections` — collections in a section, each child count exposed as
   `Views` (`section`, `sort`, `limit`).
+- `plex.watchlist` — your account's watchlist from the Plex Discover API
+  (`filter`: all/available/released, `type`, `sort`, `limit`).
+- `plex.trending` — the trending row from Discover home (`type`, `limit`).
+  Plex does not document this feed; if they move it the provider fails with
+  the hub names it did find.
+
+The two Discover providers also take `inLibrary` ("true" keeps only titles on
+your server, "false" only titles you don't have) and `trailers: true`, which
+matches items to your library by GUID and splices the local trailer. They need
+`PLEX_TOKEN` to be a plex.tv *account* token — exactly what `cmd/plex-token`
+produces — not a server-local one.
 
 Add a provider in `internal/providers` and reference it from a manifest; no
 engine changes required.

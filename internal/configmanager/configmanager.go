@@ -1,6 +1,9 @@
 package configmanager
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/kelseyhightower/envconfig"
 )
 
@@ -60,6 +63,26 @@ func (period Period) ToString() string {
 	}
 }
 
+type PrerollMode string
+
+const (
+	PrerollRandom   PrerollMode = "random"
+	PrerollSequence PrerollMode = "sequence"
+)
+
+// Separator maps the mode to Plex's pre-roll list syntax: "," plays one entry
+// at random per play, ";" plays entries in sequence.
+func (mode PrerollMode) Separator() (string, error) {
+	switch PrerollMode(strings.ToLower(string(mode))) {
+	case PrerollRandom:
+		return ",", nil
+	case PrerollSequence:
+		return ";", nil
+	default:
+		return "", fmt.Errorf("invalid PLEX_PREROLL_MODE %q (want %q or %q)", mode, PrerollRandom, PrerollSequence)
+	}
+}
+
 type Config struct {
 	PlexURL         string `envconfig:"PLEX_URL" required:"true"`
 	PlexToken       Secret `envconfig:"PLEX_TOKEN" required:"true"`
@@ -72,6 +95,17 @@ type Config struct {
 	// *.plex.direct cert with no IP SAN, so connecting to a bare IP over HTTPS
 	// fails verification. Enable only on a trusted network.
 	PlexInsecure bool `envconfig:"PLEX_INSECURE" default:"false"`
+	// SetPreroll appends rendered outputs to the server's pre-roll preference
+	// (CinemaTrailersPrerollID) after a fully successful run. Requires
+	// PrerollServerDir and a token belonging to the server owner.
+	SetPreroll bool `envconfig:"PLEX_SET_PREROLL" default:"false"`
+	// PrerollServerDir is the output directory as the Plex server process
+	// sees it (e.g. the mount of pre-roll-output/ inside the Plex container).
+	PrerollServerDir string `envconfig:"PLEX_PREROLL_SERVER_DIR" default:""`
+	// PrerollMode picks the list separator when the preference starts empty:
+	// "random" (comma) or "sequence" (semicolon). An existing preference keeps
+	// its separator.
+	PrerollMode PrerollMode `envconfig:"PLEX_PREROLL_MODE" default:"random"`
 }
 
 // MustReadConfig Returns a shallow copy of application configuration. Panics if the configuration is invalid.

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/configmanager"
@@ -32,6 +33,19 @@ func main() {
 	flag.Parse()
 
 	config := configmanager.MustReadConfig()
+
+	// Fail before rendering, not after: a multi-manifest run is expensive.
+	prerollSep := ""
+	if config.SetPreroll {
+		if config.PrerollServerDir == "" {
+			log.Fatalf("PLEX_SET_PREROLL=true requires PLEX_PREROLL_SERVER_DIR (the output directory as the Plex server sees it)")
+		}
+		sep, err := config.PrerollMode.Separator()
+		if err != nil {
+			log.Fatalf("config: %v", err)
+		}
+		prerollSep = sep
+	}
 
 	paths, err := manifestPaths(*manifestDir, *manifestPath)
 	if err != nil {
@@ -68,7 +82,8 @@ func main() {
 	}
 
 	registry := providers.NewRegistry()
-	plexprovider.Register(registry, plexClient)
+	discoverClient := plexclient.NewDiscoverClient(config.PlexToken, config.Debug)
+	plexprovider.Register(registry, plexClient, discoverClient)
 
 	eng := &engine.Engine{
 		Providers: registry,
@@ -87,28 +102,80 @@ func main() {
 	// Batch mode keeps going past a bad manifest so one typo does not sink the
 	// whole run; the process still exits non-zero if anything failed.
 	failures := 0
+	var outputs []string
 	for _, path := range paths {
-		if err := runManifest(eng, path, vars); err != nil {
+		output, err := runManifest(eng, path, vars)
+		if err != nil {
 			log.Printf("ERROR: %s: %v", describe(path), err)
 			failures++
+			continue
 		}
+		outputs = append(outputs, output)
 	}
 	if failures > 0 {
+		// A half-failed batch must not touch the server preference.
 		log.Fatalf("%d of %d manifest(s) failed", failures, len(paths))
+	}
+	if config.SetPreroll {
+		if err := updatePreroll(plexClient, outputs, config.PrerollServerDir, prerollSep); err != nil {
+			log.Fatalf("preroll pref: %v", err)
+		}
 	}
 }
 
-// runManifest loads and renders a single manifest.
-func runManifest(eng *engine.Engine, path string, vars map[string]any) error {
+// runManifest loads and renders a single manifest, returning the output path.
+func runManifest(eng *engine.Engine, path string, vars map[string]any) (string, error) {
 	preroll, err := loadManifest(path)
+	if err != nil {
+		return "", err
+	}
+	if err := eng.Run(context.Background(), preroll, vars); err != nil {
+		return "", err
+	}
+	log.Printf("wrote %s (from %s)", preroll.Output, describe(path))
+	return preroll.Output, nil
+}
+
+// updatePreroll appends this run's outputs (rebased onto the directory the
+// Plex server sees) to the server's pre-roll preference. Existing entries are
+// kept; entries already present are not re-added; if nothing is new the
+// preference is left untouched.
+func updatePreroll(client *plexclient.PlexClient, outputs []string, serverDir, defaultSep string) error {
+	additions := make([]string, 0, len(outputs))
+	for _, out := range outputs {
+		p := serverPath(serverDir, filepath.Base(out))
+		// "," and ";" are Plex's list separators; a path containing either
+		// would corrupt the preference value.
+		if strings.ContainsAny(p, ",;") {
+			return fmt.Errorf("output path %q contains a Plex list separator (',' or ';')", p)
+		}
+		additions = append(additions, p)
+	}
+
+	current, err := client.GetPreroll()
 	if err != nil {
 		return err
 	}
-	if err := eng.Run(context.Background(), preroll, vars); err != nil {
+	merged, changed := plexclient.MergePrerolls(current, additions, defaultSep)
+	if !changed {
+		log.Printf("preroll pref already lists all %d output(s); leaving it untouched", len(additions))
+		return nil
+	}
+	if err := client.SetPreroll(merged); err != nil {
 		return err
 	}
-	log.Printf("wrote %s (from %s)", preroll.Output, describe(path))
+	log.Printf("preroll pref updated: %s", merged)
 	return nil
+}
+
+// serverPath joins name onto dir using the separator style dir already uses;
+// the Plex server may run on Windows while this tool renders on Linux, so
+// filepath.Join (host-native) is wrong here.
+func serverPath(dir, name string) string {
+	if strings.Contains(dir, "\\") {
+		return strings.TrimRight(dir, "\\") + "\\" + name
+	}
+	return strings.TrimRight(dir, "/") + "/" + name
 }
 
 // manifestPaths resolves which manifests to render. A directory (batch mode)

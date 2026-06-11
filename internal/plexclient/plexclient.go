@@ -106,6 +106,23 @@ func (client *PlexClient) Extras(ratingKey string) (content.Items, error) {
 	return items, nil
 }
 
+// FindByGUID looks an agent GUID (e.g. plex://movie/...) up in the local
+// library, returning the first match. Used to tie items from cloud sources
+// (watchlist, trending) back to local media for trailer resolution.
+func (client *PlexClient) FindByGUID(guid string) (content.Item, bool, error) {
+	if strings.TrimSpace(guid) == "" {
+		return content.Item{}, false, fmt.Errorf("plex: guid is required")
+	}
+	items, err := client.listItems("/library/all", url.Values{"guid": {guid}})
+	if err != nil {
+		return content.Item{}, false, err
+	}
+	if len(items) == 0 {
+		return content.Item{}, false, nil
+	}
+	return items[0], true, nil
+}
+
 // listItems issues a GET and maps the metadata into content.Items.
 func (client *PlexClient) listItems(path string, params url.Values) (content.Items, error) {
 	decoded, err := client.fetch(path, params)
@@ -118,6 +135,8 @@ func (client *PlexClient) listItems(path string, params url.Values) (content.Ite
 			Name:      m.Title,
 			Views:     viewCount(m),
 			RatingKey: m.RatingKey,
+			GUID:      m.GUID,
+			Type:      m.Type,
 			Art:       client.imageURL(m.Art),
 			Thumb:     client.imageURL(m.Thumb),
 		})
@@ -125,26 +144,44 @@ func (client *PlexClient) listItems(path string, params url.Values) (content.Ite
 	return items, nil
 }
 
+// statusError is a non-200 response, kept typed so callers can react to
+// specific codes (e.g. 401 from Discover means wrong kind of token).
+type statusError struct {
+	code int
+	path string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("plex: unexpected status %d for %s", e.code, e.path)
+}
+
 // fetch performs the request and decodes the lean listing shape.
 func (client *PlexClient) fetch(path string, params url.Values) (*itemsResponse, error) {
-	resp, err := client.GetURL(path, params)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("plex: unexpected status %d for %s", resp.StatusCode, path)
-	}
-
 	var decoded itemsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return nil, fmt.Errorf("plex: decode %s: %w", path, err)
+	if err := client.getJSON(path, params, &decoded); err != nil {
+		return nil, err
 	}
 	if client.Debug {
 		log.Printf("plex: %s decoded %d items", path, len(decoded.MediaContainer.Metadata))
 	}
 	return &decoded, nil
+}
+
+// getJSON performs an authenticated GET and decodes the body into dst.
+func (client *PlexClient) getJSON(path string, params url.Values, dst any) error {
+	resp, err := client.GetURL(path, params)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &statusError{code: resp.StatusCode, path: path}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
+		return fmt.Errorf("plex: decode %s: %w", path, err)
+	}
+	return nil
 }
 
 // Diagnose probes a sequence of endpoints (simplest first) and logs the outcome

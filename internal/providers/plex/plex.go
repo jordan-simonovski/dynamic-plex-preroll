@@ -35,15 +35,19 @@ type Client interface {
 	SectionItems(sectionID string, params url.Values) (content.Items, error)
 	CollectionItems(sectionID string, params url.Values) (content.Items, error)
 	Extras(ratingKey string) (content.Items, error)
+	FindByGUID(guid string) (content.Item, bool, error)
 }
 
-// Register wires the Plex-backed providers into reg.
-func Register(reg *providers.Registry, client Client) {
+// Register wires the Plex-backed providers into reg. client talks to the
+// local server; discover talks to the Plex Discover cloud API.
+func Register(reg *providers.Registry, client Client, discover DiscoverClient) {
 	reg.Register(ProviderTop, topProvider{client})
 	reg.Register(ProviderUnwatched, unwatchedProvider{client})
 	reg.Register(ProviderTrailers, trailersProvider{client})
 	reg.Register(ProviderSection, sectionProvider{client})
 	reg.Register(ProviderCollections, collectionsProvider{client})
+	reg.Register(ProviderWatchlist, watchlistProvider{discover, client})
+	reg.Register(ProviderTrending, trendingProvider{discover, client})
 }
 
 // topProvider serves plex.top: most-viewed items in a section/period.

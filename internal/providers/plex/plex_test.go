@@ -28,6 +28,12 @@ func newClient(server *httptest.Server) *plexclient.PlexClient {
 	}
 }
 
+// registerAll wires the providers with the same client playing both the local
+// and Discover roles; tests that need distinct backends call Register directly.
+func registerAll(reg *providers.Registry, client *plexclient.PlexClient) {
+	Register(reg, client, client)
+}
+
 func TestTopProvider(t *testing.T) {
 	var gotQuery url.Values
 	var gotPath string
@@ -39,7 +45,7 @@ func TestTopProvider(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	items, err := reg.Fetch(context.Background(), ProviderTop, map[string]string{
 		"type": "2", "period": "MONTH", "limit": "5",
@@ -71,7 +77,7 @@ func TestTopProviderMapsFriendlyType(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	if _, err := reg.Fetch(context.Background(), ProviderTop, map[string]string{"type": "movie"}); err != nil {
 		t.Fatalf("Fetch: %v", err)
@@ -92,7 +98,7 @@ func TestUnwatchedProvider(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	items, err := reg.Fetch(context.Background(), ProviderUnwatched, map[string]string{
 		"section": "1", "type": "movie", "sort": "addedAt:desc", "limit": "4",
@@ -113,7 +119,7 @@ func TestUnwatchedProvider(t *testing.T) {
 
 func TestUnwatchedProviderRequiresSection(t *testing.T) {
 	reg := providers.NewRegistry()
-	Register(reg, &plexclient.PlexClient{})
+	registerAll(reg, &plexclient.PlexClient{})
 	if _, err := reg.Fetch(context.Background(), ProviderUnwatched, map[string]string{}); err == nil {
 		t.Fatal("expected error when section missing")
 	}
@@ -142,7 +148,7 @@ func TestTrailersProvider(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	items, err := reg.Fetch(context.Background(), ProviderTrailers, map[string]string{
 		"section": "1", "filter": "unwatched", "limit": "4",
@@ -183,7 +189,7 @@ func TestTopProviderResolvesTrailers(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	items, err := reg.Fetch(context.Background(), ProviderTop, map[string]string{
 		"type": "movie", "section": "1", "limit": "5", "trailers": "true",
@@ -218,7 +224,7 @@ func TestSectionProviderPassthroughAndKnobs(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	items, err := reg.Fetch(context.Background(), ProviderSection, map[string]string{
 		"section": "1", "type": "movie", "sort": "addedAt:desc", "limit": "8",
@@ -262,7 +268,7 @@ func TestSectionProviderRandomSamplesPoolAndTrims(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	items, err := reg.Fetch(context.Background(), ProviderSection, map[string]string{
 		"section": "1", "random": "true", "limit": "2",
@@ -282,7 +288,7 @@ func TestSectionProviderRandomSamplesPoolAndTrims(t *testing.T) {
 
 func TestSectionProviderRequiresSection(t *testing.T) {
 	reg := providers.NewRegistry()
-	Register(reg, &plexclient.PlexClient{})
+	registerAll(reg, &plexclient.PlexClient{})
 	if _, err := reg.Fetch(context.Background(), ProviderSection, map[string]string{}); err == nil {
 		t.Fatal("expected error when section missing")
 	}
@@ -297,7 +303,7 @@ func TestCollectionsProvider(t *testing.T) {
 	defer server.Close()
 
 	reg := providers.NewRegistry()
-	Register(reg, newClient(server))
+	registerAll(reg, newClient(server))
 
 	items, err := reg.Fetch(context.Background(), ProviderCollections, map[string]string{
 		"section": "1", "limit": "8",
