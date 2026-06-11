@@ -1,0 +1,39 @@
+# "You wanted to watch these": titles from your Plex watchlist that are now on
+# the server, pulled live from the Discover API and matched to your library.
+# Requires PLEX_TOKEN to be a plex.tv account token (see cmd/plex-token).
+# Run with: MANIFEST_PATH=manifests/watchlist.yaml
+name: watchlist
+resolution: 1920x1080
+fps: 24
+output: output/watchlist.mp4
+length: 18
+
+audio:
+  file: media/common/locket-crumb.mp3
+  mode: soundtrack
+  start: 25
+  fadeOut: { start: 13, duration: 5 }
+
+data:
+  wanted:
+    provider: plex.watchlist
+    params: { filter: all, inLibrary: "true", limit: "8" }
+
+layouts:
+  wanted:
+    background: { color: "#0d0f14" }
+    font: media/common/Adult-Swim-Font.ttf
+    elements:
+      - { type: text, x: 96, y: 170, size: 96, color: white, text: "On Your Watchlist" }
+      - { type: text, x: 96, y: 236, size: 44, color: "#8aa0b5", text: "Already here. No excuses." }
+      - type: list
+        x: 96
+        startY: 360
+        stepY: 92
+        size: 52
+        color: "#dfe7ef"
+        source: wanted
+        item: '{{ .Rank }}.  {{ truncate 44 .Name }}'
+
+scenes:
+  - { kind: render, layout: wanted, duration: 18 }

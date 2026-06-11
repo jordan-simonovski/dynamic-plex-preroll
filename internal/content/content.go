@@ -17,10 +17,22 @@ type Item struct {
 	// item's background art (landscape) and poster (portrait), when available.
 	Art   string
 	Thumb string
+	// GUID is the agent identifier (e.g. plex://movie/...), used to match
+	// items from cloud sources against the local library.
+	GUID string
+	// Type is the item kind ("movie", "show") when the source provides it.
+	Type string
 }
 
 // Items is an ordered, ranked list of library entries.
 type Items []Item
+
+// Hub is a named row of items from a Plex hub listing (e.g. Discover home).
+type Hub struct {
+	Identifier string
+	Title      string
+	Items      Items
+}
 
 // Label returns the human-readable rank line, e.g. "1. The Wire - 3 views".
 // Rank is 1-based.

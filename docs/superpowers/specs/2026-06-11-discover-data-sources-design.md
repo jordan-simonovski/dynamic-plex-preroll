@@ -68,8 +68,10 @@ Discover items carry `plex://movie/...` / `plex://show/...` GUIDs. Matching:
 - `PlexClient.FindByGUID(guid)` → `GET {PLEX_URL}/library/all?guid=<guid>`,
   returns the first local item (RatingKey, token-authenticated art/thumb) or
   none.
-- Matching runs after `limit` is applied: ≤ limit requests per source, not a
-  hot path.
+- Without an `inLibrary` filter, matching runs after `limit` is applied:
+  ≤ limit requests per source. With `inLibrary` set, filtering discards items,
+  so the provider fetches a pool of 40 from Discover, matches, filters, then
+  trims to `limit` — otherwise a mostly-offline watchlist starves the result.
 - Matched items get the local `RatingKey` (enabling `attachTrailers`) and keep
   Discover metadata otherwise.
 - `inLibrary: true` keeps only matched items; `false` only unmatched; unset
