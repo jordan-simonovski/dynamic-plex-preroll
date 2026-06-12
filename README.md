@@ -14,6 +14,31 @@ It is a single Go binary (plus ImageMagick and ffmpeg for rendering), runs from 
 `docker compose up`, and ships with a dozen example manifests you can use as-is or
 tweak.
 
+## What it looks like
+
+A few rendered examples (sample data — yours are built from your own server):
+
+<!--
+  To make these play inline: open this README in GitHub's web editor (pencil icon),
+  drag the matching .mp4 from pre-roll-output/ into the editor, wait for GitHub to
+  replace it with a https://github.com/user-attachments/assets/... URL, and paste
+  that URL into the src="" below. Only those CDN URLs render as a player; a link to
+  a file committed in the repo will not.
+-->
+
+**`trailers.yaml`** — a title card, then real trailers of unwatched picks spliced back to back:
+
+<video src="https://github.com/user-attachments/assets/59215e3b-621e-42bc-8f46-5d35b7fef988" controls width="600"></video>
+
+**`top-movies-trailer-wall.yaml`** — your most-watched movies over a moving wall of their own trailers:
+
+<video src="https://github.com/user-attachments/assets/f10f1fce-fccd-429e-8202-1b45cfcb73c3
+" controls width="600"></video>
+
+**`collections.yaml`** — your movie collections with their title counts:
+
+<video src="https://github.com/user-attachments/assets/c63293a5-34a8-4557-a03d-5dbfdcb9d6c9" controls width="600"></video>
+
 ## What you can build
 
 The bundled manifests under [manifests/](manifests/) are working examples, not
