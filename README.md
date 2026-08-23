@@ -283,11 +283,26 @@ echo "PLEX_TOKEN=\"$(go run ./cmd/plex-token -login you@example.com)\"" >> .env
 
 ## Running tests
 
+There are two suites: the Go tests, and the config UI's browser code, which is
+checked by plain `node --test` (no npm, no build step). `make test` runs both:
+
+```
+make test
+```
+
 Everything except the ImageMagick layout interpreter (`internal/render`) and the
-`cmd` entrypoint is CGO-free. With ImageMagick installed, the whole suite runs:
+`cmd` entrypoint is CGO-free. With ImageMagick installed, the whole Go suite
+runs:
 
 ```
 go test ./...
+```
+
+The UI checks on their own — Node 22+ needs the glob, a bare directory argument
+is not expanded:
+
+```
+make test-js          # or: node --test 'internal/webui/*_test.js'
 ```
 
 Without ImageMagick, test the CGO-free packages directly (the `render` package
@@ -296,7 +311,7 @@ won't build without it):
 ```
 go test ./internal/manifest/... ./internal/templating/... ./internal/content/... \
   ./internal/configmanager/... ./internal/plexclient/... ./internal/providers/... \
-  ./internal/pipeline/... ./internal/engine/...
+  ./internal/pipeline/... ./internal/engine/... ./internal/webui/...
 ```
 
 The real rendering path has an opt-in smoke test (requires ImageMagick):
