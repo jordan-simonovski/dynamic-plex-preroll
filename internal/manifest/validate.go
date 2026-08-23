@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// Validate checks structural and referential integrity. It fails closed: any
-// unknown kind, dangling reference, or nonsensical value is an error.
-func (p *Preroll) Validate() error {
+// Problems returns every structural and referential problem in the manifest,
+// one string each. An empty slice means the manifest is valid.
+func (p *Preroll) Problems() []string {
 	var errs []string
 	add := func(format string, args ...any) {
 		errs = append(errs, fmt.Sprintf(format, args...))
@@ -33,7 +33,13 @@ func (p *Preroll) Validate() error {
 	p.validateLayouts(add)
 	p.validateScenes(add)
 
-	if len(errs) > 0 {
+	return errs
+}
+
+// Validate checks structural and referential integrity. It fails closed: any
+// unknown kind, dangling reference, or nonsensical value is an error.
+func (p *Preroll) Validate() error {
+	if errs := p.Problems(); len(errs) > 0 {
 		return fmt.Errorf("invalid manifest:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil

@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -178,6 +179,105 @@ func TestShippedManifests(t *testing.T) {
 	for _, path := range paths {
 		if _, err := Load(path); err != nil {
 			t.Errorf("Load(%s): %v", path, err)
+		}
+	}
+}
+
+// A complete manifest exercising every DSL feature, used for round-trip tests.
+const roundTripFixture = `
+name: fixture
+resolution: 1920x1080
+fps: 24
+output: output/fixture.mp4
+length: 16
+audio:
+  file: media/track.mp3
+  mode: soundtrack
+  start: 25
+  fadeOut: { start: 11, duration: 5 }
+data:
+  topMovies:
+    provider: plex.top
+    params: { type: movie, section: "1", limit: "5", trailers: "true" }
+layouts:
+  main:
+    background: { color: none }
+    font: media/font.ttf
+    elements:
+      - { type: text, x: 96, y: 150, size: 96, color: white, align: center, text: "Top Movies", lineHeight: 100 }
+      - { type: list, x: 96, startY: 320, stepY: 96, size: 56, color: white, source: topMovies, item: "{{ .Rank }}. {{ .Name }}" }
+scenes:
+  - { kind: image, file: media/intro.png, duration: 3 }
+  - kind: render
+    layout: main
+    duration: 8
+    vars: { Title: "Hello" }
+    background: { source: topMovies, mode: trailers, tile: grid, dim: 0.35, limit: 4 }
+  - { kind: clips, source: topMovies, perClip: 4, label: main }
+`
+
+func TestToYAMLRoundTrip(t *testing.T) {
+	p, err := Parse([]byte(roundTripFixture))
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	out, err := p.ToYAML()
+	if err != nil {
+		t.Fatalf("ToYAML: %v", err)
+	}
+	p2, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse emitted YAML: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(p, p2) {
+		t.Fatalf("round trip changed the manifest:\nfirst:  %+v\nsecond: %+v", p, p2)
+	}
+}
+
+// JSON is a subset of YAML, so the strict decoder must accept a JSON body
+// verbatim — this is what the web UI posts.
+func TestDecodeAcceptsJSON(t *testing.T) {
+	body := []byte(`{"name":"j","resolution":"1920x1080","fps":24,"output":"o.mp4",` +
+		`"scenes":[{"kind":"image","file":"a.png","duration":3}]}`)
+	p, err := Decode(body)
+	if err != nil {
+		t.Fatalf("Decode(json): %v", err)
+	}
+	if p.Name != "j" || p.FPS != 24 || len(p.Scenes) != 1 {
+		t.Fatalf("decoded wrong values: %+v", p)
+	}
+}
+
+func TestDecodeRejectsUnknownFields(t *testing.T) {
+	if _, err := Decode([]byte(`{"name":"x","bogus":1}`)); err == nil {
+		t.Fatal("expected unknown-field error, got nil")
+	}
+}
+
+func TestDecodeSkipsValidation(t *testing.T) {
+	// Invalid manifest (no fps, no scenes) must still decode.
+	p, err := Decode([]byte(`{"name":"draft"}`))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(p.Problems()) == 0 {
+		t.Fatal("expected problems for a draft manifest, got none")
+	}
+}
+
+func TestProblemsMatchesValidate(t *testing.T) {
+	p := &Preroll{} // everything missing
+	problems := p.Problems()
+	if len(problems) == 0 {
+		t.Fatal("expected problems for empty manifest")
+	}
+	err := p.Validate()
+	if err == nil {
+		t.Fatal("expected Validate error for empty manifest")
+	}
+	for _, prob := range problems {
+		if !strings.Contains(err.Error(), prob) {
+			t.Fatalf("problem %q missing from Validate error %q", prob, err)
 		}
 	}
 }
