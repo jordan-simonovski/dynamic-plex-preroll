@@ -1,6 +1,7 @@
 package plexclient
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -31,7 +32,7 @@ func TestWatchlistItemsDefaultsFilterAndPassesParams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	items, err := testClient(server).WatchlistItems("", url.Values{"libtype": {"movie"}})
+	items, err := testClient(server).WatchlistItems(context.Background(), "", url.Values{"libtype": {"movie"}})
 	if err != nil {
 		t.Fatalf("WatchlistItems: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestWatchlistItemsExplains401(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := testClient(server).WatchlistItems("all", url.Values{})
+	_, err := testClient(server).WatchlistItems(context.Background(), "all", url.Values{})
 	if err == nil || !strings.Contains(err.Error(), "account token") {
 		t.Fatalf("err = %v, want account-token hint on 401", err)
 	}
@@ -81,7 +82,7 @@ func TestHomeHubs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hubs, err := testClient(server).HomeHubs(url.Values{})
+	hubs, err := testClient(server).HomeHubs(context.Background(), url.Values{})
 	if err != nil {
 		t.Fatalf("HomeHubs: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestFindByGUID(t *testing.T) {
 	defer server.Close()
 	client := testClient(server)
 
-	item, ok, err := client.FindByGUID("plex://movie/abc")
+	item, ok, err := client.FindByGUID(context.Background(), "plex://movie/abc")
 	if err != nil || !ok {
 		t.Fatalf("FindByGUID: ok=%v err=%v", ok, err)
 	}
@@ -115,7 +116,7 @@ func TestFindByGUID(t *testing.T) {
 		t.Errorf("item = %+v", item)
 	}
 
-	_, ok, err = client.FindByGUID("plex://movie/missing")
+	_, ok, err = client.FindByGUID(context.Background(), "plex://movie/missing")
 	if err != nil {
 		t.Fatalf("FindByGUID miss: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestFindByGUID(t *testing.T) {
 		t.Error("expected no match")
 	}
 
-	if _, _, err := client.FindByGUID(" "); err == nil {
+	if _, _, err := client.FindByGUID(context.Background(), " "); err == nil {
 		t.Error("expected error for blank guid")
 	}
 }

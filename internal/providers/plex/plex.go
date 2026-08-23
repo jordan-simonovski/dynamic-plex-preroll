@@ -31,11 +31,11 @@ const sectionPool = 200
 // Client is the slice of plexclient the providers depend on. Kept as an
 // interface so providers can be unit-tested with a fake.
 type Client interface {
-	TopItems(params url.Values) (content.Items, error)
-	SectionItems(sectionID string, params url.Values) (content.Items, error)
-	CollectionItems(sectionID string, params url.Values) (content.Items, error)
-	Extras(ratingKey string) (content.Items, error)
-	FindByGUID(guid string) (content.Item, bool, error)
+	TopItems(ctx context.Context, params url.Values) (content.Items, error)
+	SectionItems(ctx context.Context, sectionID string, params url.Values) (content.Items, error)
+	CollectionItems(ctx context.Context, sectionID string, params url.Values) (content.Items, error)
+	Extras(ctx context.Context, ratingKey string) (content.Items, error)
+	FindByGUID(ctx context.Context, guid string) (content.Item, bool, error)
 }
 
 // Register wires the Plex-backed providers into reg. client talks to the
@@ -53,7 +53,7 @@ func Register(reg *providers.Registry, client Client, discover DiscoverClient) {
 // topProvider serves plex.top: most-viewed items in a section/period.
 type topProvider struct{ client Client }
 
-func (p topProvider) Fetch(_ context.Context, params map[string]string) (content.Items, error) {
+func (p topProvider) Fetch(ctx context.Context, params map[string]string) (content.Items, error) {
 	q := url.Values{}
 	setIfPresent(q, "limit", params["limit"])
 	if t := params["type"]; t != "" {
@@ -65,12 +65,12 @@ func (p topProvider) Fetch(_ context.Context, params map[string]string) (content
 		// url.Values supplies the trailing "=", yielding "viewedAt>>=<ts>".
 		q.Set("viewedAt>>", fmt.Sprint(time.Now().AddDate(0, 0, -days).Unix()))
 	}
-	items, err := p.client.TopItems(q)
+	items, err := p.client.TopItems(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	if isTrue(params["trailers"]) {
-		return attachTrailers(p.client, items)
+		return attachTrailers(ctx, p.client, items)
 	}
 	return items, nil
 }
@@ -78,7 +78,7 @@ func (p topProvider) Fetch(_ context.Context, params map[string]string) (content
 // unwatchedProvider serves plex.unwatched: unwatched items in a section.
 type unwatchedProvider struct{ client Client }
 
-func (p unwatchedProvider) Fetch(_ context.Context, params map[string]string) (content.Items, error) {
+func (p unwatchedProvider) Fetch(ctx context.Context, params map[string]string) (content.Items, error) {
 	section := params["section"]
 	if section == "" {
 		return nil, fmt.Errorf("plex.unwatched: section is required")
@@ -89,14 +89,14 @@ func (p unwatchedProvider) Fetch(_ context.Context, params map[string]string) (c
 	}
 	setIfPresent(q, "sort", params["sort"])
 	setIfPresent(q, "limit", params["limit"])
-	return p.client.SectionItems(section, q)
+	return p.client.SectionItems(ctx, section, q)
 }
 
 // trailersProvider serves plex.trailers: resolves a streamable trailer URL for
 // each candidate item in a section.
 type trailersProvider struct{ client Client }
 
-func (p trailersProvider) Fetch(_ context.Context, params map[string]string) (content.Items, error) {
+func (p trailersProvider) Fetch(ctx context.Context, params map[string]string) (content.Items, error) {
 	section := params["section"]
 	if section == "" {
 		return nil, fmt.Errorf("plex.trailers: section is required")
@@ -114,7 +114,7 @@ func (p trailersProvider) Fetch(_ context.Context, params map[string]string) (co
 	setIfPresent(q, "sort", params["sort"])
 	setIfPresent(q, "limit", params["limit"])
 
-	candidates, err := p.client.SectionItems(section, q)
+	candidates, err := p.client.SectionItems(ctx, section, q)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (p trailersProvider) Fetch(_ context.Context, params map[string]string) (co
 		if item.RatingKey == "" {
 			continue
 		}
-		extras, err := p.client.Extras(item.RatingKey)
+		extras, err := p.client.Extras(ctx, item.RatingKey)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +153,7 @@ var sectionReserved = map[string]bool{
 	"unwatched": true, "random": true, "trailers": true,
 }
 
-func (p sectionProvider) Fetch(_ context.Context, params map[string]string) (content.Items, error) {
+func (p sectionProvider) Fetch(ctx context.Context, params map[string]string) (content.Items, error) {
 	section := params["section"]
 	if section == "" {
 		return nil, fmt.Errorf("plex.section: section is required")
@@ -181,7 +181,7 @@ func (p sectionProvider) Fetch(_ context.Context, params map[string]string) (con
 		q.Set(key, value)
 	}
 
-	items, err := p.client.SectionItems(section, q)
+	items, err := p.client.SectionItems(ctx, section, q)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func (p sectionProvider) Fetch(_ context.Context, params map[string]string) (con
 		}
 	}
 	if isTrue(params["trailers"]) {
-		return attachTrailers(p.client, items)
+		return attachTrailers(ctx, p.client, items)
 	}
 	return items, nil
 }
@@ -200,12 +200,12 @@ func (p sectionProvider) Fetch(_ context.Context, params map[string]string) (con
 // attachTrailers resolves each item's first streamable trailer (via the extras
 // endpoint) into its MediaURL, leaving items without one untouched. This lets a
 // single data source feed both list text and a matching trailer background.
-func attachTrailers(client Client, items content.Items) (content.Items, error) {
+func attachTrailers(ctx context.Context, client Client, items content.Items) (content.Items, error) {
 	for i := range items {
 		if items[i].RatingKey == "" {
 			continue
 		}
-		extras, err := client.Extras(items[i].RatingKey)
+		extras, err := client.Extras(ctx, items[i].RatingKey)
 		if err != nil {
 			return nil, err
 		}
@@ -223,7 +223,7 @@ func attachTrailers(client Client, items content.Items) (content.Items, error) {
 // each item's child count exposed as Views.
 type collectionsProvider struct{ client Client }
 
-func (p collectionsProvider) Fetch(_ context.Context, params map[string]string) (content.Items, error) {
+func (p collectionsProvider) Fetch(ctx context.Context, params map[string]string) (content.Items, error) {
 	section := params["section"]
 	if section == "" {
 		return nil, fmt.Errorf("plex.collections: section is required")
@@ -231,7 +231,7 @@ func (p collectionsProvider) Fetch(_ context.Context, params map[string]string) 
 	q := url.Values{}
 	setIfPresent(q, "sort", params["sort"])
 	setIfPresent(q, "limit", params["limit"])
-	return p.client.CollectionItems(section, q)
+	return p.client.CollectionItems(ctx, section, q)
 }
 
 // isTrue reports whether a manifest string param denotes an enabled flag.

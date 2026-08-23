@@ -8,14 +8,16 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/manifest"
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/templating"
 )
 
-// resolveTimeout caps a preview fetch. A slow Plex must not wedge the editor's
-// stage: the source reports a timeout and the stage falls back to placeholders.
+// resolveTimeout caps one /api/data/resolve request, however many sources it
+// names. A slow Plex must not wedge the editor's stage: the sources report a
+// timeout and the stage falls back to placeholders.
 const resolveTimeout = 20 * time.Second
 
 // previewItemLimit caps how many items each source returns to the browser. The
@@ -83,13 +85,35 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	out.Configured = true
 	out.Vars = s.Plex.Vars
 
-	ctx, cancel := context.WithTimeout(r.Context(), resolveTimeout)
+	// One deadline for the whole request, not one per source: five sources
+	// against a wedged Plex must not add up to five timeouts. The providers
+	// honour ctx down to the HTTP request, so an expiry aborts them in flight.
+	ctx, cancel := context.WithTimeout(r.Context(), s.resolveDeadline())
 	defer cancel()
 
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	for name, ds := range req.Data {
-		out.Sources[name] = s.resolveOne(ctx, ds)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resolved := s.resolveOne(ctx, ds)
+			mu.Lock()
+			defer mu.Unlock()
+			out.Sources[name] = resolved
+		}()
 	}
+	wg.Wait()
 	writeJSON(w, http.StatusOK, out)
+}
+
+// resolveDeadline is how long the whole resolve may take. ResolveTimeout is
+// only ever set by tests that need a short one.
+func (s *Server) resolveDeadline() time.Duration {
+	if s.ResolveTimeout > 0 {
+		return s.ResolveTimeout
+	}
+	return resolveTimeout
 }
 
 func (s *Server) resolveOne(ctx context.Context, ds manifest.DataSource) resolvedSource {

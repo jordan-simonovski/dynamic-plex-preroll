@@ -1,6 +1,7 @@
 package plexclient
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -28,7 +29,7 @@ type prefsResponse struct {
 // GetPreroll returns the current value of the server's pre-roll preference
 // (CinemaTrailersPrerollID). An empty string means the preference is unset.
 func (client *PlexClient) GetPreroll() (string, error) {
-	resp, err := client.GetURL(prefsPath, url.Values{})
+	resp, err := client.GetURL(context.Background(), prefsPath, url.Values{})
 	if err != nil {
 		return "", err
 	}

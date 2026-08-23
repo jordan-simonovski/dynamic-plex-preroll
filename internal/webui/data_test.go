@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,9 @@ import (
 	"time"
 
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/content"
+	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/plexclient"
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/providers"
+	plexprovider "github.com/jordan-simonovski/dynamic-plex-preroll/internal/providers/plex"
 )
 
 // fakeProvider stands in for a Plex-backed provider so the endpoint can be
@@ -249,5 +252,61 @@ func TestImageProxyPassesThroughAnAllowlistedURL(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if string(body) != "PNGDATA" {
 		t.Fatalf("got %q", body)
+	}
+}
+
+// TestResolveBoundsTheWholeRequestNotEachSource proves two things at once: the
+// deadline resolve() sets actually reaches the HTTP request (the providers and
+// plexclient thread the context all the way down), and it bounds the request as
+// a whole. The Plex stand-in never answers and its client has no Timeout of its
+// own, so nothing but the context can end these calls; five sources resolved
+// one after another would cost five deadlines.
+func TestResolveBoundsTheWholeRequestNotEachSource(t *testing.T) {
+	const deadline = 300 * time.Millisecond
+
+	unresponsive := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // answers only when the client gives up
+	}))
+	t.Cleanup(unresponsive.Close)
+
+	client := &plexclient.PlexClient{PlexURL: unresponsive.URL, HTTPClient: unresponsive.Client()}
+	reg := providers.NewRegistry()
+	plexprovider.Register(reg, client, client)
+
+	s := &Server{
+		ManifestDir:    t.TempDir(),
+		ResolveTimeout: deadline,
+		Plex:           &PlexSource{Registry: reg, BaseURL: unresponsive.URL},
+	}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	sources := make([]string, 0, 5)
+	for i := 0; i < 5; i++ {
+		sources = append(sources, fmt.Sprintf(`"src%d":{"provider":"plex.top","params":{}}`, i))
+	}
+	body := `{"data":{` + strings.Join(sources, ",") + `}}`
+
+	start := time.Now()
+	res := do(t, "POST", ts.URL+"/api/data/resolve", body)
+	elapsed := time.Since(start)
+
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if elapsed > 3*deadline {
+		t.Fatalf("5 sources took %s against a %s deadline; the endpoint must bound the whole request, not each source", elapsed, deadline)
+	}
+	var out resolveResponse
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Sources) != 5 {
+		t.Fatalf("every source must still be reported, got %d", len(out.Sources))
+	}
+	for name, src := range out.Sources {
+		if src.Error == "" {
+			t.Fatalf("source %s must report the timeout so the UI can say so", name)
+		}
 	}
 }

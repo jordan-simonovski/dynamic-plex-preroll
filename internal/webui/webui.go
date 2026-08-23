@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/manifest"
 )
@@ -55,6 +56,9 @@ type Server struct {
 	// Plex is the optional live connection used for data previews and the
 	// image proxy. Nil means the editor runs on placeholder data.
 	Plex *PlexSource
+	// ResolveTimeout overrides how long /api/data/resolve may spend on a
+	// request; zero means resolveTimeout. Tests set it to keep short.
+	ResolveTimeout time.Duration
 	// PlexError explains why Plex is off, surfaced through /api/capabilities so
 	// the UI can say "PLEX_TOKEN unset" rather than silently faking everything.
 	PlexError string
