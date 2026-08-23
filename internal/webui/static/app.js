@@ -55,12 +55,18 @@ function textInput(path, value, opts = {}) {
 }
 function numInput(path, value, opts = {}) {
   return `<input type="number" data-path="${esc(path)}" data-type="${opts.int ? "int" : "number"}"` +
-    ` value="${value ?? 0}" step="${opts.step ?? "any"}"` + (opts.min != null ? ` min="${opts.min}"` : "") + `>`;
+    ` value="${esc(value ?? 0)}" step="${opts.step ?? "any"}"` + (opts.min != null ? ` min="${opts.min}"` : "") + `>`;
 }
+// If value isn't among options (e.g. it names a data source or layout that
+// was since deleted/renamed), inject it as an extra, labelled-missing option
+// so the select shows the real state instead of silently falling back to the
+// first option — which would corrupt state the moment the user touches it.
 function select(path, value, options, opts = {}) {
-  const body = options.map((o) =>
+  const missing = value !== "" && value != null && !options.includes(value);
+  const list = missing ? [...options, value] : options;
+  const body = list.map((o) =>
     `<option value="${esc(o)}"${o === value ? " selected" : ""}>` +
-    `${esc(o === "" ? (opts.emptyLabel ?? "(none)") : o)}</option>`).join("");
+    `${esc(o === "" ? (opts.emptyLabel ?? "(none)") : (missing && o === value ? `${o} (missing)` : o))}</option>`).join("");
   const rerender = opts.rerender ? ` data-rerender="${esc(opts.rerender)}"` : "";
   const extra = opts.attrs ?? "";
   return `<select data-path="${esc(path)}"${rerender} ${extra}>${body}</select>`;
