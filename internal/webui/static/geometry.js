@@ -22,10 +22,8 @@ const GEO_DEFAULT_LINE_SPACING = 1.2;   // render.go: defaultLineSpacing
 const GEO_DEFAULT_TEXT_COLOR = "white"; // render.go: setFillColor's fallback
 const GEO_DEFAULT_BG_COLOR = "black";   // render.go: setupCanvas's fallback
 const GEO_MIN_SIZE = 8;
-const GEO_MAX_SIZE = 512;
 
 function geoRound1(n) { return Math.round(n * 10) / 10; }
-function geoClamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
 
 const Geometry = {
   DEFAULT_LINE_SPACING: GEO_DEFAULT_LINE_SPACING,
@@ -133,12 +131,60 @@ const Geometry = {
     return { x: geoRound1((el.x || 0) + dx), y: geoRound1((el.y || 0) + dy) };
   },
 
+  // dragPatch is the whole move calculation: apply the raw delta, then look at
+  // the box's three anchors on each axis (left/centre/right, top/middle/
+  // bottom) and take the nearest snap within tolerance, adjusting the delta by
+  // however far that anchor had to move. Returning the guides it locked onto
+  // lets the stage draw them; keeping the arithmetic here keeps the pointer
+  // handler free of maths and this behaviour testable in Node.
+  //
+  // `el` must be the element as it was when the gesture STARTED, and `box` its
+  // box then: the patch is absolute (el.x + dx), so feeding back an element a
+  // previous frame of the same drag already moved compounds the delta.
+  // Narrowing `best` as the loop goes is what makes the nearest anchor win
+  // rather than the last one that happened to be in range.
+  dragPatch(el, box, dx, dy, targets, tol) {
+    const anchorsX = [box.x + dx, box.x + box.w / 2 + dx, box.x + box.w + dx];
+    const anchorsY = [box.y + dy, box.y + box.h / 2 + dy, box.y + box.h + dy];
+    let adjustX = 0;
+    let guideX = null;
+    let bestX = tol;
+    for (const a of anchorsX) {
+      const s = Geometry.snap(a, targets.xs || [], bestX);
+      if (s.guide !== null) { bestX = Math.abs(a - s.guide); adjustX = s.guide - a; guideX = s.guide; }
+    }
+    let adjustY = 0;
+    let guideY = null;
+    let bestY = tol;
+    for (const a of anchorsY) {
+      const s = Geometry.snap(a, targets.ys || [], bestY);
+      if (s.guide !== null) { bestY = Math.abs(a - s.guide); adjustY = s.guide - a; guideY = s.guide; }
+    }
+    return {
+      patch: Geometry.moveTo(el, dx + adjustX, dy + adjustY),
+      guides: { x: guideX, y: guideY },
+    };
+  },
+
   // Resizing changes the font size, the only size the DSL has. The scale
   // factor is how much taller the box got, so the drag feels proportional.
+  //
+  // The bounds are deliberately one-sided, and that is a change from the
+  // clamp this function shipped with. manifest.go declares Size as a bare
+  // float64 and neither validate.go nor render.go puts a ceiling on it, so a
+  // 512 clamp here was an editor-only rule: a manifest carrying `size: 700`
+  // got silently rewritten down the instant the handle was touched, moving a
+  // value the user never dragged. The one bound that IS the renderer's is
+  // "stay positive" — a zero or negative pointsize draws nothing — and even
+  // that floor drops to the element's own size when it already starts below
+  // it, for the same reason. Nothing needs defending at the top end: a text
+  // box is about as tall as its font, so the factor works out at roughly one
+  // manifest pixel of size per pixel dragged, and a pointer cannot travel far
+  // past the frame. An element with no size has nothing to scale.
   resizeSize(startSize, startBoxHeight, dy) {
-    if (startBoxHeight <= 0) return startSize;
+    if (startBoxHeight <= 0 || startSize <= 0) return startSize;
     const factor = (startBoxHeight + dy) / startBoxHeight;
-    return geoClamp(geoRound1(startSize * factor), GEO_MIN_SIZE, GEO_MAX_SIZE);
+    return Math.max(Math.min(GEO_MIN_SIZE, startSize), geoRound1(startSize * factor));
   },
 
   // Guides a drag can lock onto: the canvas edges and centre, plus the edges

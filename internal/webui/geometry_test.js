@@ -68,6 +68,8 @@ test("geometry.js runs with no DOM in scope at all", () => {
   assert.ok(G.onHandle(boxA, 10, 10, 1));
   same(G.moveTo({ type: "text", x: 10, y: 20 }, 5, -5), { x: 15, y: 15 });
   assert.strictEqual(G.resizeSize(100, 100, 50), 150);
+  same(G.dragPatch({ type: "text", x: 10, y: 20 }, boxA, 5, 5, { xs: [], ys: [] }, 8),
+    { patch: { x: 15, y: 25 }, guides: { x: null, y: null } });
   const targets = G.snapTargets(1920, 1080, [boxA]);
   same(G.snap(958, targets.xs, 8), { value: 960, guide: 960 });
   same(G.safeArea(1000, 1000, 0.1), { x: 100, y: 100, w: 800, h: 800 });
@@ -218,12 +220,27 @@ test("moveTo rounds to one decimal so YAML stays readable", () => {
   assert.deepStrictEqual(Geometry.moveTo({ type: "text", x: 0, y: 0 }, 1.23456, 0), { x: 1.2, y: 0 });
 });
 
-test("resizeSize scales the font by the handle's vertical travel and clamps", () => {
+test("resizeSize scales the font by the handle's vertical travel", () => {
   assert.strictEqual(Geometry.resizeSize(100, 100, 50), 150);
   assert.strictEqual(Geometry.resizeSize(100, 100, -50), 50);
-  assert.strictEqual(Geometry.resizeSize(100, 100, -99), 8, "clamped at the small end");
-  assert.strictEqual(Geometry.resizeSize(100, 100, 10000), 512, "clamped at the large end");
+  assert.strictEqual(Geometry.resizeSize(100, 100, -99), 8, "floored so it stays drawable");
+  assert.strictEqual(Geometry.resizeSize(100, 100, -1000), 8, "a negative pointsize is not a size");
   assert.strictEqual(Geometry.resizeSize(100, 0, 50), 100, "a zero-height box cannot scale");
+  assert.strictEqual(Geometry.resizeSize(0, 100, 50), 0, "an element with no size has nothing to scale");
+});
+
+// The trap this replaced: the old clamp topped out at 512, a number with no
+// basis anywhere in manifest.go, validate.go or render.go. Touching the handle
+// of a legitimately large element rewrote a value the user never dragged.
+test("resizeSize never drags a size back inside bounds the renderer does not have", () => {
+  const box = 700 * 1.2;
+  assert.strictEqual(Geometry.resizeSize(700, box, 0), 700, "a nudge that goes nowhere changes nothing");
+  assert.ok(Geometry.resizeSize(700, box, 1) > 700, "an out-of-range size can still grow");
+  assert.ok(Geometry.resizeSize(700, box, -100) < 700, "and can still shrink");
+  // The floor drops with the element for the same reason: a 4pt element must
+  // not jump to 8 the instant the handle is touched.
+  assert.strictEqual(Geometry.resizeSize(4, 5, -100), 4);
+  assert.ok(Geometry.resizeSize(4, 5, 5) > 4);
 });
 
 // ---- snapping --------------------------------------------------------------
@@ -245,6 +262,79 @@ test("snapTargets offers the canvas edges, its centre, and every other box", () 
   const t = Geometry.snapTargets(1920, 1080, [{ x: 100, y: 200, w: 100, h: 100 }]);
   assert.deepStrictEqual(t.xs, [0, 960, 1920, 100, 150, 200]);
   assert.deepStrictEqual(t.ys, [0, 540, 1080, 200, 250, 300]);
+});
+
+// ---- dragPatch: the whole move calculation ---------------------------------
+
+test("dragPatch snaps the element's own edges to the guides", () => {
+  const el = { type: "text", x: 100, y: 500, size: 100, align: "left" };
+  const box = { x: 100, y: 460, w: 200, h: 100 };
+  const targets = { xs: [0, 960, 1920], ys: [0, 540, 1080] };
+  // Dragging right by 855 puts the box's left edge at 955, five short of the
+  // 960 centre guide: it should snap, and x moves by the SNAPPED delta.
+  const out = Geometry.dragPatch(el, box, 855, 0, targets, 8);
+  assert.strictEqual(out.patch.x, 960);
+  assert.strictEqual(out.guides.x, 960);
+  assert.strictEqual(out.patch.y, 500, "an unsnapped axis keeps its raw delta");
+  assert.strictEqual(out.guides.y, null);
+});
+
+test("dragPatch leaves an unsnapped drag exactly where it was dropped", () => {
+  const el = { type: "text", x: 100, y: 500 };
+  const box = { x: 100, y: 460, w: 200, h: 100 };
+  const out = Geometry.dragPatch(el, box, 30, 40, { xs: [0], ys: [0] }, 8);
+  assert.deepStrictEqual(out.patch, { x: 130, y: 540 });
+  assert.deepStrictEqual(out.guides, { x: null, y: null });
+});
+
+test("dragPatch moves a list by startY, not y", () => {
+  const el = { type: "list", x: 96, startY: 320 };
+  const box = { x: 96, y: 280, w: 400, h: 500 };
+  const out = Geometry.dragPatch(el, box, 10, 10, { xs: [], ys: [] }, 8);
+  assert.deepStrictEqual(out.patch, { x: 106, startY: 330 });
+});
+
+test("dragPatch snaps to whichever of the box's three x anchors is closest", () => {
+  const el = { type: "text", x: 100, y: 500, align: "left" };
+  const box = { x: 100, y: 460, w: 200, h: 100 }; // right edge at 300
+  // Dragging right by 655 puts the RIGHT edge at 955 — 5 from the 960 guide.
+  const out = Geometry.dragPatch(el, box, 655, 0, { xs: [960], ys: [] }, 8);
+  assert.strictEqual(out.patch.x, 760, "x moves so the right edge lands on 960");
+  assert.strictEqual(out.guides.x, 960);
+});
+
+test("dragPatch prefers the nearest anchor when several are in range", () => {
+  const el = { type: "text", x: 0, y: 0 };
+  const box = { x: 0, y: 0, w: 10, h: 10 };
+  // Dragging by 93 puts the three x anchors at 93, 98 and 103 — all three
+  // within 8 of the single 100 guide. The CENTRE is nearest (2 away), so the
+  // element moves by 95. Only because the loop narrows its tolerance as it
+  // goes: without that the last anchor in range (103) would win and this
+  // would be 90.
+  const out = Geometry.dragPatch(el, box, 93, 0, { xs: [100], ys: [] }, 8);
+  assert.strictEqual(out.patch.x, 95);
+  assert.strictEqual(out.guides.x, 100);
+});
+
+test("dragPatch snaps both axes independently", () => {
+  const el = { type: "text", x: 0, y: 0 };
+  const box = { x: 0, y: 0, w: 100, h: 100 };
+  // x snaps by the box's LEFT edge (47 -> 50); y by its MIDDLE (1003 -> 1000),
+  // which pulls the anchor to 950, not to the guide.
+  const out = Geometry.dragPatch(el, box, 47, 953, { xs: [50], ys: [1000] }, 8);
+  assert.deepStrictEqual(out.patch, { x: 50, y: 950 });
+  assert.deepStrictEqual(out.guides, { x: 50, y: 1000 });
+});
+
+test("dragPatch is absolute, so replaying the same delta lands in the same place", () => {
+  // The reason the drag state machine snapshots the element at press time: a
+  // patch is el.x + dx, not a relative nudge. Applying frame N and then frame
+  // N to a moved element would double it.
+  const el = { type: "text", x: 100, y: 100 };
+  const box = { x: 100, y: 100, w: 10, h: 10 };
+  const targets = { xs: [], ys: [] };
+  assert.deepStrictEqual(Geometry.dragPatch(el, box, 30, 30, targets, 8).patch, { x: 130, y: 130 });
+  assert.deepStrictEqual(Geometry.dragPatch(el, box, 30, 30, targets, 8).patch, { x: 130, y: 130 });
 });
 
 test("safeArea insets 5% by default", () => {

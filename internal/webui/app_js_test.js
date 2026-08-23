@@ -78,7 +78,7 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "api.js", "stage.js", "inspector.js", "sections.js", "app.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "inspector.js", "sections.js", "app.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 // `state` is a top-level `let` in state.js, so it lives in the context's
