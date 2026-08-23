@@ -473,7 +473,98 @@ rerenderHooks["scene-kind"] = (dataset) => {
   state.scenes[+dataset.index] = sceneDefaults(state.scenes[+dataset.index].kind);
 };
 
-function renderToolbar() {}
+async function renderToolbar() {
+  let names = [];
+  try {
+    names = await (await fetch("/api/manifests")).json();
+  } catch { /* server list is a convenience; the editor still works */ }
+  $("#manifest-actions").innerHTML = `
+    <select id="manifest-picker">
+      <option value="">— open manifest —</option>
+      ${names.map((n) => `<option>${esc(n)}</option>`).join("")}
+    </select>
+    <button class="btn ghost" id="btn-new">New</button>
+    <button class="btn" id="btn-save">Save</button>
+    <button class="btn ghost danger" id="btn-delete">Delete</button>`;
+  $("#manifest-picker").onchange = (e) => e.target.value && loadManifest(e.target.value);
+  $("#btn-new").onclick = () => {
+    if (!confirm("Discard the current editor contents?")) return;
+    state = emptyManifest();
+    $("#manifest-picker").value = "";
+    renderAll();
+    convert();
+  };
+  $("#btn-save").onclick = saveManifest;
+  $("#btn-delete").onclick = deleteManifest;
+}
+
+// The server omits empty fields (omitempty), so rebuild the containers the
+// renderers index into.
+function normalize(m) {
+  const base = emptyManifest();
+  const out = { ...base, ...m };
+  out.audio = { ...base.audio, ...(m.audio || {}) };
+  out.data = m.data || {};
+  out.layouts = m.layouts || {};
+  out.scenes = m.scenes || [];
+  for (const ds of Object.values(out.data)) ds.params = ds.params || {};
+  for (const l of Object.values(out.layouts)) {
+    l.background = l.background || { color: "", image: "" };
+    l.elements = l.elements || [];
+  }
+  return out;
+}
+
+async function loadManifest(name) {
+  const res = await fetch(`/api/manifests/${encodeURIComponent(name)}`);
+  if (!res.ok) {
+    flash(`Could not load ${name}: ${await res.text()}`, true);
+    return;
+  }
+  state = normalize(await res.json());
+  renderAll();
+  convert();
+  flash(`Loaded ${name}`);
+}
+
+async function saveManifest() {
+  if (!state.name) {
+    flash("Give the pre-roll a name before saving", true);
+    return;
+  }
+  const filename = `${state.name}.yaml`;
+  const res = await fetch(`/api/manifests/${encodeURIComponent(filename)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state),
+  });
+  if (!res.ok) {
+    flash(`Not saved: ${await res.text()}`, true);
+    return;
+  }
+  flash(`Saved ${filename}`);
+  await renderToolbar();
+  $("#manifest-picker").value = filename;
+}
+
+async function deleteManifest() {
+  const name = $("#manifest-picker").value;
+  if (!name) {
+    flash("Open a manifest first", true);
+    return;
+  }
+  if (!confirm(`Delete ${name}? The file is removed from the manifest directory.`)) return;
+  const res = await fetch(`/api/manifests/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!res.ok) {
+    flash(`Not deleted: ${await res.text()}`, true);
+    return;
+  }
+  flash(`Deleted ${name}`);
+  state = emptyManifest();
+  renderAll();
+  convert();
+  renderToolbar();
+}
 
 function renderAll() {
   renderGeneral();
