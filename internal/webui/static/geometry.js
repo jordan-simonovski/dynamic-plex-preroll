@@ -12,6 +12,11 @@
 // Text metrics arrive through a `measure(text) -> {width, ascent, descent}`
 // callback (the browser passes one backed by ctx.measureText). Injecting them
 // is what keeps this file pure.
+//
+// That injected measure() is also the file's largest known divergence from
+// the renderer: browser text shaping (ctx.measureText) does not match
+// ImageMagick/FreeType's glyph metrics exactly, so lineBox/elementBox widths
+// are an approximation, not a guarantee, of what render.go will draw.
 
 const GEO_DEFAULT_LINE_SPACING = 1.2;   // render.go: defaultLineSpacing
 const GEO_DEFAULT_TEXT_COLOR = "white"; // render.go: setFillColor's fallback
@@ -150,6 +155,10 @@ const Geometry = {
 
   // Returns the snapped value and the guide it locked onto (null when nothing
   // was near enough), so the caller can draw the guide line it snapped to.
+  // Ties (two targets exactly equidistant) resolve to the LAST one in
+  // `targets`, deliberately: the loop uses `<=` rather than `<` so a later
+  // target overwrites an equally-close earlier one. Harmless in practice
+  // (snapTargets rarely produces exact ties), but pinned by a test.
   snap(value, targets, tol) {
     let best = null;
     let bestDistance = tol;
@@ -185,9 +194,12 @@ const Geometry = {
   // share one row; anything past the fourth is dropped. The integer division
   // is render.go's uint(width/cols) — with an odd resolution the last column
   // or row leaves a black strip, and the stage should show that honestly.
-  // NOTE: render.go only takes the grid path when there is MORE than one
-  // image — a single image falls through to cover. Callers must check that.
+  // render.go (buildImageBackground) only takes the grid path when there is
+  // MORE than one image; count<=1 falls through to the cover path, so this
+  // returns a single full-rect cell to match — not a half-height 2x2 cell
+  // the renderer would never draw.
   gridCells(count, width, height) {
+    if (count <= 1) return [{ x: 0, y: 0, w: width, h: height }];
     const n = Math.min(count, 4);
     const cols = 2;
     const rows = n === 2 ? 1 : 2;
