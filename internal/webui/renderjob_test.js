@@ -109,6 +109,16 @@ test("nextRenderView: a poll that errors mid-run stops polling without touching 
   assert.match(v.status, /lost track/i);
 });
 
+test("nextRenderView: an unrecognised state fails closed instead of falling through to the success view", () => {
+  const v = nextRenderView({ id: "x", state: "cancelled", seconds: 3, log: "killed\n" });
+  assert.strictEqual(v.isError, true);
+  assert.strictEqual(v.showVideo, false);
+  assert.strictEqual(v.keepPolling, false);
+  assert.strictEqual(v.buttonDisabled, false);
+  assert.match(v.status, /unexpected render state/i);
+  assert.match(v.status, /cancelled/);
+});
+
 // ---- terminal-state coverage: nothing here can poll forever ------------------
 
 test("every state nextRenderView understands is either keepPolling:true (running) or false (everything else)", () => {
@@ -116,6 +126,7 @@ test("every state nextRenderView understands is either keepPolling:true (running
     { id: "x", state: "running" },
     { id: "x", state: "failed" },
     { id: "x", state: "done", seconds: 1 },
+    { id: "x", state: "cancelled" },
     { kind: "poll-error", message: "x" },
   ];
   for (const job of cases) {

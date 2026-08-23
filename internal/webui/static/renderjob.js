@@ -49,11 +49,20 @@ function nextRenderView(job) {
       buttonDisabled: false, keepPolling: false, log: job.log || "", showVideo: false,
     };
   }
-  // done
+  if (job.state === "done") {
+    return {
+      status: `Rendered in ${Math.round(job.seconds)}s`, isError: false,
+      buttonDisabled: false, keepPolling: false, log: job.log || "", showVideo: true,
+      videoSrc: `/api/render/${encodeURIComponent(job.id)}/video`,
+    };
+  }
+  // Fail closed: an unrecognised state is shown as an error, never as a
+  // success. render.go only ever emits running|failed|done today, so this is
+  // unreachable in practice — but a silent fall-through here would present a
+  // future/unknown state as a finished render, video and all.
   return {
-    status: `Rendered in ${Math.round(job.seconds)}s`, isError: false,
-    buttonDisabled: false, keepPolling: false, log: job.log || "", showVideo: true,
-    videoSrc: `/api/render/${encodeURIComponent(job.id)}/video`,
+    status: `Unexpected render state: ${job.state}`, isError: true,
+    buttonDisabled: false, keepPolling: false, log: job.log || "", showVideo: false,
   };
 }
 
