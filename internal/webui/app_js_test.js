@@ -87,7 +87,7 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "inspector.js", "timeline.js", "sections.js", "app.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "pickers.js", "inspector.js", "timeline.js", "sections.js", "app.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 // `state` is a top-level `let` in state.js, so it lives in the context's
@@ -98,8 +98,11 @@ vm.runInContext(`globalThis.__t = {
 };`, ctx);
 
 // The renderers are exercised at boot above; from here they only add noise.
+// (renderInspector's real body needs panel.contains(), which this stub DOM
+// does not implement — its own DOM behaviour is inspector_test.js's job.)
 ctx.renderAll = () => {};
 ctx.renderStage = () => {};
+ctx.renderInspector = () => {};
 ctx.flash = (msg, isError) => flashes.push({ msg, isError });
 pending.length = 0; // drop the boot convert; later converts get higher seqs
 
@@ -212,6 +215,63 @@ function check(name, cond, detail) {
   ctx.onEditorInput({ target: typed });
   check("syncPath: a customised output is left alone",
     ctx.__t.getState().output === "custom.mp4", ctx.__t.getState().output);
+  bound.length = 0;
+}
+
+// colour picker: the text field stays authoritative. Typing "none" — a value
+// the native <input type="color"> cannot hold — must land in state verbatim
+// and must not be "corrected" to a hex; the swatch (a separate DOM node) has
+// to keep up without a full renderInspector() destroying the cursor
+// mid-keystroke (see onEditorInput's comment). The native picker's own change
+// event is the reverse case: it only ever writes a hex it produced itself.
+{
+  ctx.__t.setState({ ...ctx.emptyManifest(),
+    layouts: { main: { font: "", background: { color: "white" }, elements: [] } } });
+  const path = "layouts.main.background.color";
+
+  const text = boundInput(path, "white");
+  text.dataset.colorText = "";
+
+  const swatchClasses = new Set();
+  const swatch = makeEl();
+  swatch.dataset.swatchFor = path;
+  swatch.classList = {
+    toggle(cls, on) { on ? swatchClasses.add(cls) : swatchClasses.delete(cls); },
+    add(cls) { swatchClasses.add(cls); }, remove(cls) { swatchClasses.delete(cls); },
+    contains(cls) { return swatchClasses.has(cls); },
+  };
+  bound.push(swatch);
+
+  const picker = makeEl();
+  picker.dataset.colorFor = path;
+  picker.value = "#ffffff";
+  bound.push(picker);
+
+  text.value = "none";
+  ctx.onEditorInput({ target: text });
+  check("colour: typing 'none' writes it to state verbatim, never a hex",
+    ctx.__t.getState().layouts.main.background.color === "none",
+    ctx.__t.getState().layouts.main.background.color);
+  check("colour: the swatch flips to swatch-none for an unrepresentable value",
+    swatchClasses.has("swatch-none"), [...swatchClasses].join(","));
+  check("colour: a value the picker cannot hold leaves the native picker untouched",
+    picker.value === "#ffffff", picker.value);
+
+  text.value = "#ff0000";
+  ctx.onEditorInput({ target: text });
+  check("colour: a hex value clears swatch-none", !swatchClasses.has("swatch-none"));
+  check("colour: the swatch background follows the typed hex",
+    swatch.style.background === "#ff0000", swatch.style.background);
+  check("colour: the native picker follows a representable typed value",
+    picker.value === "#ff0000", picker.value);
+
+  // The native picker firing its own change event writes its hex back into
+  // the text value's path — nothing derived, nothing guessed.
+  picker.value = "#00ff00";
+  ctx.onEditorChange({ target: picker });
+  check("colour: the native picker's change writes its own hex into state",
+    ctx.__t.getState().layouts.main.background.color === "#00ff00",
+    ctx.__t.getState().layouts.main.background.color);
   bound.length = 0;
 }
 

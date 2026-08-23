@@ -214,3 +214,19 @@ input[type="checkbox"] { width: auto; }
 .scene-card .scene-secs { grid-area: secs; align-self: end; font-size: 11px; color: var(--muted); }
 .rail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .rail-actions .btn { flex: 1 1 auto; padding: 6px 8px; font-size: 12px; }
+
+/* ---- colour picker (Task 12) ---------------------------------------------- */
+.color-row { display: grid; grid-template-columns: 20px 1fr 34px; gap: 6px; align-items: center; }
+.swatch {
+  width: 20px; height: 20px; border-radius: 4px;
+  border: 1px solid var(--border); background: #000;
+}
+/* A value with no representable colour gets a struck-through swatch rather
+   than a misleading black square. */
+.swatch-none {
+  background:
+    linear-gradient(45deg, transparent 45%, var(--danger) 45%, var(--danger) 55%, transparent 55%),
+    repeating-conic-gradient(#2a2f38 0% 25%, #1b1f26 0% 50%) 0 / 8px 8px;
+}
+input[type="color"].color-pick { padding: 0; height: 28px; border-radius: 4px; cursor: pointer; }
+.color-row + small code { font-family: var(--mono); }
