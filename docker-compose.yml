@@ -17,3 +17,14 @@ services:
       context: .
       target: plex-token
     profiles: ["tools"]
+
+  preroll-ui:
+    build:
+      context: .
+      target: preroll-ui
+    ports:
+      - "8382:8382"
+    volumes:
+      - ./manifests:/build/manifests
+    environment:
+      - MANIFEST_DIR=/build/manifests
