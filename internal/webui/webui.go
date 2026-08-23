@@ -59,6 +59,9 @@ type Server struct {
 	// ResolveTimeout overrides how long /api/data/resolve may spend on a
 	// request; zero means resolveTimeout. Tests set it to keep short.
 	ResolveTimeout time.Duration
+	// RenderTimeout overrides the ceiling on a single render; zero means
+	// renderTimeout. Tests set it short to exercise the kill path.
+	RenderTimeout time.Duration
 	// PlexError explains why Plex is off, surfaced through /api/capabilities so
 	// the UI can say "PLEX_TOKEN unset" rather than silently faking everything.
 	PlexError string

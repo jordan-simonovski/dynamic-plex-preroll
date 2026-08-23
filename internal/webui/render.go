@@ -21,9 +21,9 @@ import (
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/manifest"
 )
 
-// renderTimeout is a hard ceiling on a single render. A trailer montage over a
-// slow link is genuinely slow, so this is generous; without it a wedged ffmpeg
-// would hold the single job slot forever.
+// renderTimeout is the default hard ceiling on a single render. A trailer
+// montage over a slow link is genuinely slow, so this is generous; without it a
+// wedged ffmpeg would hold the single job slot forever.
 const renderTimeout = 20 * time.Minute
 
 // renderLogLimit caps how much subprocess output is kept. Enough to see what
@@ -178,7 +178,7 @@ func (s *Server) startRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), renderTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.renderDeadline())
 	job := &renderJob{ID: id, State: "running", started: time.Now(), cancel: cancel, output: outputPath}
 
 	// Claiming the slot and rejecting a competing render happen under one lock
@@ -209,6 +209,11 @@ func (s *Server) runRender(ctx context.Context, job *renderJob, manifestPath str
 	cmd := exec.CommandContext(ctx, s.RenderBin, "-manifest", manifestPath)
 	cmd.Dir = s.WorkDir
 	cmd.Env = renderEnv(os.Environ())
+	// Killing the renderer at the deadline is not enough on its own: a
+	// grandchild (ffmpeg) inherits the output pipe, and cmd.Run would block on
+	// it long after the process it launched is dead — which is exactly the
+	// wedged slot the deadline exists to prevent.
+	cmd.WaitDelay = 10 * time.Second
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -228,7 +233,7 @@ func (s *Server) runRender(ctx context.Context, job *renderJob, manifestPath str
 	switch {
 	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 		job.State = "failed"
-		job.Error = fmt.Sprintf("render timed out after %s", renderTimeout)
+		job.Error = fmt.Sprintf("render timed out after %s", s.renderDeadline())
 	case err != nil:
 		job.State = "failed"
 		job.Error = err.Error()
@@ -294,6 +299,15 @@ func (s *Server) cleanupPreviousJobLocked(renderDir string) {
 	os.Remove(s.currentJob.output)
 	os.Remove(filepath.Join(renderDir, s.currentJob.ID+".yaml"))
 	s.currentJob = nil
+}
+
+// renderDeadline is how long one render may take. RenderTimeout is the
+// override; zero means the package default.
+func (s *Server) renderDeadline() time.Duration {
+	if s.RenderTimeout > 0 {
+		return s.RenderTimeout
+	}
+	return renderTimeout
 }
 
 // renderDirAbs resolves RenderDir against the same working directory the
