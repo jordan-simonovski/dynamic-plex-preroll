@@ -210,6 +210,9 @@ func (s *Server) runRender(ctx context.Context, job *renderJob, manifestPath str
 	cmd := exec.CommandContext(ctx, s.RenderBin, "-manifest", manifestPath)
 	cmd.Dir = s.WorkDir
 	cmd.Env = renderEnv(os.Environ())
+	// The renderer is a process TREE (it runs ffmpeg), so the deadline has to
+	// kill a group, not a process. See procgroup_unix.go.
+	killProcessGroup(cmd)
 	// Killing the renderer at the deadline is not enough on its own: a
 	// grandchild (ffmpeg) inherits the output pipe, and cmd.Run would block on
 	// it long after the process it launched is dead — which is exactly the

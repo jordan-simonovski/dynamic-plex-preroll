@@ -128,8 +128,18 @@ func (s *Server) filesRaw(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, fmt.Errorf("no such media file"))
 		return
 	}
-	// Previews are read from an editor the user controls; nothing here is
-	// rendered as HTML, and nosniff stops the browser deciding otherwise.
+	// Extension check, not just containment: a media root is a directory the
+	// user shares over SMB, so anyone who can drop a file in it can choose the
+	// Content-Type http.ServeFile sends. An .html (or .svg) served from here is
+	// same-origin with an API that saves and deletes manifests and starts
+	// renders — stored XSS with a file copy. nosniff does not help: it stops
+	// the browser GUESSING a type, not the server declaring text/html.
+	// The picker only ever offers these kinds anyway, so nothing legitimate is
+	// lost by refusing the rest.
+	if fileKind(filepath.Base(resolved)) == "" {
+		httpError(w, http.StatusForbidden, fmt.Errorf("%s is not a media file", filepath.Base(resolved)))
+		return
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeFile(w, r, resolved)
 }
