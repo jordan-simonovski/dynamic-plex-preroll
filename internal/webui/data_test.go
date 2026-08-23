@@ -201,6 +201,36 @@ func TestImageProxyRejectsForeignHosts(t *testing.T) {
 	}
 }
 
+// TestImageProxyDoesNotFollowRedirectsOffTheAllowlist proves the allowlist
+// cannot be walked around with a redirect: the vetted host answers 302 to a
+// host that would never pass allowImageURL, and its body must never reach the
+// browser.
+func TestImageProxyDoesNotFollowRedirectsOffTheAllowlist(t *testing.T) {
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("SECRET-FROM-A-DISALLOWED-HOST"))
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/art", http.StatusFound)
+	}))
+	t.Cleanup(upstream.Close)
+
+	s := &Server{ManifestDir: t.TempDir(), Plex: &PlexSource{BaseURL: upstream.URL, HTTPClient: upstream.Client()}}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	res := do(t, "GET", ts.URL+"/api/plex/image?u="+url.QueryEscape(upstream.URL+"/art"), "")
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode == http.StatusOK {
+		t.Fatalf("proxy followed a redirect off the allowlist (status %d)", res.StatusCode)
+	}
+	if strings.Contains(string(body), "SECRET") {
+		t.Fatalf("content from a disallowed host was streamed to the browser: %q", body)
+	}
+}
+
 func TestImageProxyPassesThroughAnAllowlistedURL(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")

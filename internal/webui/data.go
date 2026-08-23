@@ -133,7 +133,9 @@ func (s *Server) proxyImage(raw string) string {
 
 // image fetches an allowlisted Plex image and streams it back. The URL comes
 // from the page, so it is checked against the configured server and the Plex
-// CDN hosts before anything is dialled.
+// CDN hosts before anything is dialled, and the fetch refuses to follow
+// redirects: allowImageURL only vets the URL that was asked for, so a 302 from
+// an allowlisted host would otherwise walk straight out of the allowlist.
 func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 	if s.Plex == nil {
 		httpError(w, http.StatusServiceUnavailable, fmt.Errorf("plex is not configured"))
@@ -149,11 +151,7 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err)
 		return
 	}
-	client := s.Plex.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
+	resp, err := s.Plex.imageHTTPClient().Do(req)
 	if err != nil {
 		// The URL carries the token; never echo the raw error.
 		httpError(w, http.StatusBadGateway, fmt.Errorf("could not reach the Plex server for that image"))

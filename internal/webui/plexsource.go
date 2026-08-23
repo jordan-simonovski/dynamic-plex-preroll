@@ -30,6 +30,26 @@ type PlexSource struct {
 	HTTPClient *http.Client
 }
 
+// imageHTTPClient is the client the image proxy fetches a browser-supplied URL
+// with. It borrows the configured transport (so PLEX_INSECURE still applies)
+// but never follows redirects: the allowlist is checked once, against the URL
+// the page asked for, and http.Client would otherwise chase a 302 from an
+// allowlisted host to any host at all. Handing the 3xx back unfollowed turns
+// it into the handler's ordinary non-200 path.
+func (p *PlexSource) imageHTTPClient() *http.Client {
+	client := &http.Client{
+		Timeout:       30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	if p.HTTPClient != nil {
+		client.Transport = p.HTTPClient.Transport
+		if p.HTTPClient.Timeout > 0 {
+			client.Timeout = p.HTTPClient.Timeout
+		}
+	}
+	return client
+}
+
 // NewPlexSource builds the live connection from the environment, or explains
 // why it cannot. A nil source is a supported, ordinary state: the editor falls
 // back to placeholder data and says so.
