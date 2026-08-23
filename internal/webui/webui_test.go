@@ -191,6 +191,28 @@ func TestGetMissing404(t *testing.T) {
 	}
 }
 
+func TestGetUnparseable422(t *testing.T) {
+	ts, dir := newTestServer(t)
+	// Not malformed YAML syntax, but a field the Preroll struct doesn't
+	// declare: with KnownFields(true) that's just as fatal to Decode, and
+	// makes the test's intent (schema mismatch, not a syntax slip) obvious.
+	bad := "name: t\nbogus_field: true\n"
+	if err := os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := do(t, "GET", ts.URL+"/api/manifests/bad.yaml", "")
+	if res.StatusCode != 422 {
+		t.Fatalf("want 422, got %d", res.StatusCode)
+	}
+}
+
+func TestDeleteMissing404(t *testing.T) {
+	ts, _ := newTestServer(t)
+	if res := do(t, "DELETE", ts.URL+"/api/manifests/nope.yaml", ""); res.StatusCode != 404 {
+		t.Fatalf("want 404, got %d", res.StatusCode)
+	}
+}
+
 func TestStaticServed(t *testing.T) {
 	ts, _ := newTestServer(t)
 	res := do(t, "GET", ts.URL+"/", "")
