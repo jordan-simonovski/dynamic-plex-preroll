@@ -66,7 +66,7 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "pickers.js", "inspector.js", "timeline.js", "sections.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "pickers.js", "inspector.js", "timeline.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 vm.runInContext(`globalThis.__t = {
@@ -242,10 +242,14 @@ const DOUBLE_FEATURE = () => ({
   has("critical-1: scene 0 addresses the title layout", panel(), `data-path="layouts.title.font"`);
   not("critical-1: scene 0 does NOT show intermission's font field", panel(), `layouts.intermission.font`);
 
+  // Task 15: selecting a scene must also leave data mode, or the inspector
+  // would keep showing a data source's panel after the rail click.
+  __t.getSelection().dataSource = "top";
   actions["select-scene-index"]({ index: "2" });
   eq("critical-1: selecting scene 2 in the rail writes selection.sceneIndex",
     __t.getSelection().sceneIndex, 2);
   eq("critical-1: it also clears any element selection", __t.getSelection().element, null);
+  eq("critical-1: and it leaves data mode", __t.getSelection().dataSource, null);
   has("critical-1: the inspector now addresses scene 2's OWN layout (intermission)",
     panel(), `data-path="layouts.intermission.font"`);
   has("critical-1: intermission's element is listed and selectable",

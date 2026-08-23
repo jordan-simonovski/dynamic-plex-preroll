@@ -684,6 +684,9 @@ function stageKeyNav(e) {
   const action = stageKeyAction(e, selection.element, layout ? (layout.elements || []).length : 0);
   if (!action) return;
   e.preventDefault();
+  // A claimed key means the user is interacting with the stage, not the data
+  // panel — leave data mode, same as a click (interact.js's stagePointerDown).
+  selection.dataSource = null;
   if (action.type === "select") {
     selection.element = action.index;
     renderStage();

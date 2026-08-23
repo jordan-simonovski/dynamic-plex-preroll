@@ -190,6 +190,12 @@ function onEditorChange(e) {
     scheduleConvert();
     return;
   }
+  if (t.dataset.actionToggle === "audio-fade") {
+    state.audio.fadeOut = t.checked ? { start: 0, duration: 2 } : null;
+    renderInspector();
+    scheduleConvert();
+    return;
+  }
   if (t.dataset.actionToggle === "scene-bg") {
     const sc = state.scenes[+t.dataset.index];
     sc.background = t.checked
@@ -223,7 +229,7 @@ function onEditorClick(e) {
 // The inspector and the timeline rail use the same data-path/data-action
 // conventions as the phase-1 form, so they get the same three delegated
 // listeners rather than their own.
-for (const root of ["#editor", "#inspector", "#rail", "#file-picker", "#template-picker"]) {
+for (const root of ["#inspector", "#rail", "#file-picker", "#template-picker"]) {
   const el = $(root);
   el.addEventListener("input", onEditorInput);
   el.addEventListener("change", onEditorChange);
@@ -272,6 +278,17 @@ $("#toggle-safe").onchange = renderStage;
 // State mutations that change the form's shape re-render everything and
 // re-validate; a rejected rename only needs the form put back. state.js calls
 // these without knowing what "everything" is.
+//
+// Deviation from the Task 15 brief: it proposes a single-argument
+// setStateChangeHandler(() => { renderAll(); refreshStageData();
+// scheduleConvert(); }), dropping both the explicit renderStage() call and
+// the second (onRerender) argument. On disk setStateChangeHandler already
+// takes two callbacks — renameKey() calls onRerender() to restore a rejected
+// rename without a spurious re-validate — and renderAll() itself never draws
+// the stage (only the rail and the inspector). Dropping renderStage() here
+// would leave the stage showing the OLD scene/element for up to 2s after any
+// non-data edit, waiting on refreshStageData()'s debounce; dropping the
+// second argument would break a rejected rename's undo. Both are kept.
 setStateChangeHandler(
   () => { renderAll(); renderStage(); refreshStageData(); scheduleConvert(); },
   () => renderAll(),

@@ -151,6 +151,7 @@ function wireSceneDrag() {
 actions["select-scene-index"] = (d) => {
   selection.sceneIndex = +d.index;
   selection.element = null;
+  selection.dataSource = null; // leave the data panel
   renderTimeline();
   renderStage();
   renderInspector();
