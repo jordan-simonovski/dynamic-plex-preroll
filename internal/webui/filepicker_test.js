@@ -53,7 +53,14 @@ const document = {
 // {files: [], roots: []} — the no-media-configured shape files.go also
 // answers with, so the two "nothing to browse" causes render identically).
 let fetchQueue = [];
+// `parked`, when an array, holds each in-flight reply so a test can answer them
+// OUT OF ORDER — the whole point of openFilePicker's sequence guard. Same shape
+// stage_test.js uses for refreshStageDataNow.
+let parked = null;
 function fetchImpl() {
+  if (parked) {
+    return new Promise((resolve) => parked.push((body) => resolve({ json: async () => body })));
+  }
   const next = fetchQueue.shift();
   if (!next) throw new Error("no fetch queued");
   if (next.throw) return Promise.reject(new Error(next.throw));
@@ -267,6 +274,48 @@ await withPicker({ files: [{ path: "media/x.png", name: "x.png", kind: "image", 
   eq("below the cap, every font is still previewed", fontFaceLoads, 3);
   not("...and there is nothing to disclose when nothing was capped",
     document.querySelector("#file-picker-body").innerHTML, "Only the first");
+}
+
+// ---- two Browse clicks in flight at once -----------------------------------
+// /api/files is a directory walk, so a slow one can still be running when the
+// user closes the dialog and browses a differently-kinded field. The reply says
+// nothing about which kind was asked for, so whichever answered LAST used to
+// write the body — leaving the dialog titled for one kind (set synchronously at
+// open) while listing another's files.
+{
+  invalidateFileList();
+  parked = [];
+  const stale = openFilePicker("layouts.main.font", "font");
+  const fresh = openFilePicker("scenes.0.file", "image");
+  eq("stale open: both listings really are in flight", parked.length, 2);
+
+  parked[1]({ files: FILES, roots: ["media"] });
+  await fresh;
+  parked[0]({ files: FILES, roots: ["media"] });
+  await stale;
+
+  const body = document.querySelector("#file-picker-body").innerHTML;
+  eq("stale open: the title is the newest open's kind",
+    document.querySelector("#file-picker-title").textContent, "Choose a image");
+  has("stale open: the body lists the newest open's kind", body, "plex-as-logo.png");
+  not("stale open: the stale reply never writes the other kind's files into it",
+    body, "Adult-Swim-Font.ttf");
+  parked = null;
+}
+
+// Closing mid-load is an invalidation too: a listing still running when the
+// dialog closes must not paint into a dialog nobody is looking at.
+{
+  invalidateFileList();
+  parked = [];
+  const abandoned = openFilePicker("layouts.main.font", "font");
+  document.querySelector("#file-picker-body").innerHTML = "CLOSED";
+  actions["close-file-picker"]();
+  parked[0]({ files: FILES, roots: ["media"] });
+  await abandoned;
+  eq("closed mid-load: the abandoned listing never writes the body",
+    document.querySelector("#file-picker-body").innerHTML, "CLOSED");
+  parked = null;
 }
 
 // A network failure must degrade exactly like an empty response — the picker

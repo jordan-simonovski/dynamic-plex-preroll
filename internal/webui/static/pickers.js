@@ -158,8 +158,19 @@ function filePickerRow(f, kind) {
 // to — set when it opens, cleared on close or pick, so a stray keystroke
 // after closing can never write into a field the user isn't looking at.
 let filePickerTarget = null;
+// filePickerSeq is app.js's convertSeq / stage.js's stageDataSeq pattern, for
+// the same reason: /api/files is a directory walk, so two Browse clicks on
+// differently-kinded fields can be in flight at once and the replies are
+// interchangeable — nothing in them says which kind was asked for. Whichever
+// answered LAST would write the list, so the dialog could end up titled for one
+// kind (set synchronously, below) while listing another's files. Only the newest
+// open may touch the body. closeFilePicker() bumps it too, so closing mid-load
+// is an invalidation rather than a pending write into a dialog nobody is
+// looking at.
+let filePickerSeq = 0;
 
 async function openFilePicker(path, kind) {
+  const seq = ++filePickerSeq;
   filePickerTarget = path;
   const dialog = $("#file-picker");
   const body = $("#file-picker-body");
@@ -168,6 +179,7 @@ async function openFilePicker(path, kind) {
   dialog.showModal();
 
   const { files, roots } = await apiListFiles();
+  if (seq !== filePickerSeq) return; // a newer open (or a close) has superseded this one
   const matching = matchingFiles(files, kind);
   if (!matching.length) {
     body.innerHTML = filePickerEmptyHTML(kind, roots || []);
@@ -355,6 +367,7 @@ if (typeof actions !== "undefined") {
   const closeFilePicker = () => {
     $("#file-picker").close();
     filePickerTarget = null;
+    filePickerSeq++; // an in-flight listing is now stale
     invalidateFileList();
   };
   actions["browse-files"] = (d) => openFilePicker(d.target, d.kind);

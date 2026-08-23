@@ -69,7 +69,14 @@ const document = {
 // stage_test.js's own stageFetch — apiResolveData (api.js) is the only fetch
 // call inspector.js's new "Test this source" action makes.
 let resolveResponse = { configured: false, sources: {} };
+// `parkedResolves`, when an array, holds each in-flight reply so a test can
+// answer them OUT OF ORDER — the whole point of test-data's sequence guard.
+// Same shape stage_test.js uses for refreshStageDataNow.
+let parkedResolves = null;
 function inspectorFetch() {
+  if (parkedResolves) {
+    return new Promise((resolve) => parkedResolves.push((body) => resolve({ ok: true, json: async () => body })));
+  }
   return Promise.resolve({ ok: true, json: async () => resolveResponse });
 }
 
@@ -684,6 +691,36 @@ const DATA_FIXTURE = () => ({
   await actions["test-data"]({ name: "topMovies" });
   eq("test-data: a missing source in the reply degrades to empty, not a throw",
     __t.testResults.topMovies.items.length, 0);
+
+  // Two tests of the SAME source in flight at once: edit a param, retest, and
+  // the first (slow) reply must not overwrite the second with results for
+  // parameters no longer configured. The replies land keyed by source name, so
+  // nothing in them distinguishes the two.
+  {
+    parkedResolves = [];
+    const stale = actions["test-data"]({ name: "topMovies" });
+    const fresh = actions["test-data"]({ name: "topMovies" });
+    eq("test-data: both resolves really are in flight", parkedResolves.length, 2);
+
+    parkedResolves[1]({ configured: true, sources: { topMovies: { items: [{ rank: 1, name: "NEW" }] } } });
+    await fresh;
+    parkedResolves[0]({ configured: true, sources: { topMovies: { items: [{ rank: 1, name: "OLD" }] } } });
+    await stale;
+    eq("test-data: a stale reply never overwrites the newest",
+      __t.testResults.topMovies.items[0].name, "NEW");
+
+    // A different source tested meanwhile is legitimate and must still land —
+    // the guard is per name, not one global counter.
+    parkedResolves = [];
+    const other = actions["test-data"]({ name: "second" });
+    parkedResolves[0]({ configured: true, sources: { second: { items: [{ rank: 1, name: "OTHER" }] } } });
+    await other;
+    eq("test-data: a concurrent test of another source still lands",
+      __t.testResults.second.items[0].name, "OTHER");
+    eq("test-data: ...and does not disturb the first source's result",
+      __t.testResults.topMovies.items[0].name, "NEW");
+    parkedResolves = null;
+  }
 
   if (failures) {
     console.error(`\n${failures} check(s) failed`);
