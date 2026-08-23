@@ -275,7 +275,16 @@ func TestRenderNeutralisesSideEffectingEnv(t *testing.T) {
 		}
 	}
 	for k, v := range inherited {
-		if !strings.Contains(log, fmt.Sprintf("%s=[%s]", k, v)) {
+		want := v
+		if k == "PLEX_TOKEN" {
+			// The child DOES get the real token — this stub echoing it back is
+			// the only reason it appears here at all, and runRender redacts the
+			// log before the browser sees it. So the proof that the token was
+			// inherited is that something was there to redact: an unset variable
+			// would print [UNSET], not [****].
+			want = "****"
+		}
+		if !strings.Contains(log, fmt.Sprintf("%s=[%s]", k, want)) {
 			t.Errorf("%s must reach the renderer (the preview resolves against it); child saw:\n%s", k, log)
 		}
 	}
@@ -336,6 +345,60 @@ func TestRenderFailsWhenNoVideoIsProduced(t *testing.T) {
 	}
 	if res := do(t, "GET", ts.URL+"/api/render/"+started.ID+"/video", ""); res.StatusCode != 404 {
 		t.Fatalf("want 404 for a render that produced no video, got %d", res.StatusCode)
+	}
+}
+
+// A failed render prints the URLs it tried, and internal/plexclient puts the
+// token in the query string. The render panel is a browser surface, so the log
+// must come back with the token gone — in both the raw and the percent-encoded
+// spelling a URL carries.
+func TestRenderLogRedactsThePlexToken(t *testing.T) {
+	const token = "abc/def"     // "/" so the escaped form differs from the raw one
+	const escaped = "abc%2Fdef" // url.QueryEscape(token)
+	t.Setenv("PLEX_TOKEN", token)
+
+	ts, _ := renderServer(t, "#!/bin/sh\n"+
+		`echo "plex: GET http://plex:32400/library/sections?X-Plex-Token=$PLEX_TOKEN: connection refused" >&2`+"\n"+
+		`echo "plex: GET http://plex:32400/hubs?X-Plex-Token=`+escaped+`: connection refused" >&2`+"\n"+
+		"exit 1\n")
+
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	var started struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(res.Body).Decode(&started)
+
+	out := waitForJob(t, ts, started.ID)
+	log, _ := out["log"].(string)
+	if strings.Contains(log, token) {
+		t.Fatalf("the raw token reached the browser:\n%s", log)
+	}
+	if strings.Contains(log, escaped) {
+		t.Fatalf("the url-escaped token reached the browser:\n%s", log)
+	}
+	if !strings.Contains(log, "****") {
+		t.Fatalf("nothing was redacted, so the log is not the one we think:\n%s", log)
+	}
+	// The rest of the message has to survive, or the log stops being useful.
+	if !strings.Contains(log, "connection refused") {
+		t.Fatalf("redaction ate the error:\n%s", log)
+	}
+}
+
+// The render/manifest collision guard has to compare two paths built from the
+// same base. It is the BATCH renderer this protects, and a batch run's working
+// directory is WorkDir — so a relative -manifest-dir means WorkDir-relative
+// here, not cwd-relative. Resolving it against the UI process's own cwd let
+// the guard pass while the batch renderer would still glob the scratch.
+func TestRenderDirCollisionResolvesBothAgainstTheWorkDir(t *testing.T) {
+	s := &Server{ManifestDir: "manifests", RenderDir: "manifests", WorkDir: t.TempDir()}
+	if _, err := s.renderDirAbs(); err == nil {
+		t.Fatal("a relative render dir equal to a relative manifest dir must be refused, whatever the cwd is")
+	}
+	// ...and a genuinely different pair still resolves.
+	s.RenderDir = "scratch"
+	if _, err := s.renderDirAbs(); err != nil {
+		t.Fatalf("distinct directories must still be allowed: %v", err)
 	}
 }
 

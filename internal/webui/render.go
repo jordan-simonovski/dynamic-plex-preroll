@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,24 @@ func renderEnv(env []string) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// redactToken removes the Plex token from subprocess output before it is handed
+// to the browser. The child INHERITS PLEX_TOKEN (renderEnv above strips only the
+// side-effecting variables, deliberately), internal/plexclient builds request
+// URLs with the token in the query string, and a failed render prints those URLs
+// — so without this a browser sitting on /api/render/{id} reads the token out of
+// the render panel. Mirrors plexclient's own redact(), QueryEscape form included,
+// because a token inside a URL is percent-encoded.
+//
+// Applied here rather than in the shared runner: the batch renderer's own local
+// log is not a browser-facing surface and stays unchanged.
+func redactToken(s, token string) string {
+	if token == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, url.QueryEscape(token), "****")
+	return strings.ReplaceAll(s, token, "****")
 }
 
 // jobIDRE is the shape of a server-generated job id. Ids are only ever
@@ -224,7 +243,9 @@ func (s *Server) runRender(ctx context.Context, job *renderJob, manifestPath str
 	cmd.Stderr = &out
 	err := cmd.Run()
 
-	logText := out.String()
+	// Redact BEFORE trimming: a token straddling the trim boundary would
+	// otherwise survive as a fragment.
+	logText := redactToken(out.String(), os.Getenv("PLEX_TOKEN"))
 	if len(logText) > renderLogLimit {
 		// Keep the TAIL: the error is at the end, the ffmpeg banner is not.
 		logText = "… (earlier output trimmed) …\n" + logText[len(logText)-renderLogLimit:]
@@ -318,33 +339,43 @@ func (s *Server) renderDeadline() time.Duration {
 // renderer runs in, so "pre-roll-output/.ui-renders" names one directory
 // whether the UI process and the subprocess share a cwd or not.
 func (s *Server) renderDirAbs() (string, error) {
-	abs := s.RenderDir
-	if !filepath.IsAbs(abs) {
-		dir := s.RenderDir
-		if dir == "" {
-			dir = DefaultRenderDir // never scatter scratch across the working directory
-		}
-		base, err := s.workDirAbs()
-		if err != nil {
-			return "", err
-		}
-		abs = filepath.Join(base, dir)
+	base, err := s.workDirAbs()
+	if err != nil {
+		return "", err
 	}
+	dir := s.RenderDir
+	if dir == "" {
+		dir = DefaultRenderDir // never scatter scratch across the working directory
+	}
+	abs := resolveAgainst(base, dir)
 	// The scratch directory must not be the manifest directory: a render writes
 	// <id>.yaml there, and the batch renderer globs *.yaml. Nothing else stops
 	// an operator pointing -render-dir and -manifest-dir at the same path, so
 	// make the invariant structural rather than a comment.
-	// ManifestDir is resolved against this process's own cwd because that is
-	// what every other use of it does; RenderDir is resolved against WorkDir
-	// because the subprocess reads it.
-	manifestAbs, err := filepath.Abs(s.ManifestDir)
-	if err != nil {
-		return "", err
-	}
+	//
+	// BOTH are resolved against WorkDir, because this guard is about the BATCH
+	// renderer's view and a batch run's working directory is WorkDir — that is
+	// what WorkDir means. Resolving ManifestDir against this process's own cwd
+	// instead (which is what every other use of it does, since the UI reads and
+	// writes those files itself) compared two paths built from different bases,
+	// so with -work-dir set and both directories relative the guard passed while
+	// the batch renderer would still have globbed the scratch. Where the two
+	// bases disagree this can refuse a pair that is physically distinct; that is
+	// the safe direction, and the message says which paths collided.
+	manifestAbs := resolveAgainst(base, s.ManifestDir)
 	if abs == manifestAbs {
 		return "", fmt.Errorf("render dir %s is the manifest dir: scratch manifests written there would be picked up by a batch render", abs)
 	}
 	return abs, nil
+}
+
+// resolveAgainst makes dir absolute against base, cleaning it either way so two
+// spellings of one directory compare equal.
+func resolveAgainst(base, dir string) string {
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	return filepath.Join(base, dir)
 }
 
 func newJobID() (string, error) {

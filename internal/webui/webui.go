@@ -218,7 +218,7 @@ func (s *Server) save(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"name": name})
 }
 
-// writeManifest replaces path atomically and keeps the previous contents.
+// writeManifest replaces path atomically and keeps the ORIGINAL contents.
 // The manifests directory is the one the batch renderer globs, and a single
 // unparseable file fails the whole run: writing a temp file in the same
 // directory and renaming it over the target means readers see the old file or
@@ -226,6 +226,13 @@ func (s *Server) save(w http.ResponseWriter, r *http.Request) {
 // comments a hand-written manifest carries, so the old bytes are kept as
 // <name>.yaml.bak — a suffix outside the *.yaml/*.yml globs, so the backup is
 // never itself read as a manifest.
+//
+// The guarantee, exactly: the .bak holds the file as it stood before the FIRST
+// save, and is never rewritten after that. Backing up on every save would mean
+// the second save overwrote the hand-written original with the first save's
+// already-comment-stripped output, and the comments would be gone for good.
+// So this is "never lose the original", not "undo the last save" — the latter
+// is what git is for, and it is not what the README promises.
 func writeManifest(path string, out []byte) error {
 	existing, err := os.ReadFile(path)
 	hadFile := err == nil
@@ -249,7 +256,11 @@ func writeManifest(path string, out []byte) error {
 		return err
 	}
 	if hadFile {
-		if err := os.WriteFile(path+".bak", existing, 0o644); err != nil {
+		if _, err := os.Stat(path + ".bak"); errors.Is(err, os.ErrNotExist) {
+			if err := os.WriteFile(path+".bak", existing, 0o644); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
 	}

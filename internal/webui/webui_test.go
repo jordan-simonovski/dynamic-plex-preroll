@@ -160,6 +160,21 @@ func TestSaveBacksUpExistingFile(t *testing.T) {
 		t.Fatalf("want t.yaml + t.yaml.bak, got %v", entries)
 	}
 
+	// THE case: saving a second time must NOT re-back-up. Save #1's output has
+	// already lost the comments, so backing that up would replace the
+	// hand-written original with a stripped copy and lose it for good — and a
+	// test that saves only once passes either way, which is how this shipped.
+	if res := do(t, "PUT", ts.URL+"/api/manifests/t.yaml", validJSON); res.StatusCode != 200 {
+		t.Fatalf("second save: status %d", res.StatusCode)
+	}
+	bak, err = os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("backup after the second save: %v", err)
+	}
+	if string(bak) != original {
+		t.Fatalf("the second save destroyed the hand-written original:\n%s", bak)
+	}
+
 	// A first save of a new name has nothing to back up.
 	if res := do(t, "PUT", ts.URL+"/api/manifests/fresh.yaml", validJSON); res.StatusCode != 200 {
 		t.Fatalf("save fresh: status %d", res.StatusCode)
