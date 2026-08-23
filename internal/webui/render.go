@@ -30,10 +30,11 @@ const renderTimeout = 20 * time.Minute
 // went wrong, bounded so a chatty failure cannot grow without limit.
 const renderLogLimit = 64 << 10
 
-// defaultRenderDir is where scratch goes when RenderDir is unset. It is a
+// DefaultRenderDir is where scratch goes when RenderDir is unset. It is a
 // dot-directory under the output tree, never the manifest directory the batch
-// renderer globs.
-const defaultRenderDir = "pre-roll-output/.ui-renders"
+// renderer globs. Exported so cmd/preroll-ui's flag default cannot drift from
+// the server's own.
+const DefaultRenderDir = "pre-roll-output/.ui-renders"
 
 // renderEnvDenied lists the variables cmd/plex-pre-rolls reads that a preview
 // render must NOT inherit.
@@ -314,18 +315,33 @@ func (s *Server) renderDeadline() time.Duration {
 // renderer runs in, so "pre-roll-output/.ui-renders" names one directory
 // whether the UI process and the subprocess share a cwd or not.
 func (s *Server) renderDirAbs() (string, error) {
-	if filepath.IsAbs(s.RenderDir) {
-		return s.RenderDir, nil
+	abs := s.RenderDir
+	if !filepath.IsAbs(abs) {
+		dir := s.RenderDir
+		if dir == "" {
+			dir = DefaultRenderDir // never scatter scratch across the working directory
+		}
+		base, err := s.workDirAbs()
+		if err != nil {
+			return "", err
+		}
+		abs = filepath.Join(base, dir)
 	}
-	dir := s.RenderDir
-	if dir == "" {
-		dir = defaultRenderDir // never scatter scratch across the working directory
-	}
-	base, err := s.workDirAbs()
+	// The scratch directory must not be the manifest directory: a render writes
+	// <id>.yaml there, and the batch renderer globs *.yaml. Nothing else stops
+	// an operator pointing -render-dir and -manifest-dir at the same path, so
+	// make the invariant structural rather than a comment.
+	// ManifestDir is resolved against this process's own cwd because that is
+	// what every other use of it does; RenderDir is resolved against WorkDir
+	// because the subprocess reads it.
+	manifestAbs, err := filepath.Abs(s.ManifestDir)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, dir), nil
+	if abs == manifestAbs {
+		return "", fmt.Errorf("render dir %s is the manifest dir: scratch manifests written there would be picked up by a batch render", abs)
+	}
+	return abs, nil
 }
 
 func newJobID() (string, error) {

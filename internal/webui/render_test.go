@@ -338,3 +338,18 @@ func TestRenderFailsWhenNoVideoIsProduced(t *testing.T) {
 		t.Fatalf("want 404 for a render that produced no video, got %d", res.StatusCode)
 	}
 }
+
+// The rule is structural, not documentary: scratch <id>.yaml in the manifest
+// directory would be swept up by the next batch render.
+func TestRenderRefusesAScratchDirThatIsTheManifestDir(t *testing.T) {
+	ts, s := renderServer(t, fakeRendererOK)
+	s.RenderDir = s.ManifestDir
+
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	if res.StatusCode != 500 {
+		t.Fatalf("want a refusal when render dir is the manifest dir, got %d", res.StatusCode)
+	}
+	if entries, _ := os.ReadDir(s.ManifestDir); len(entries) != 0 {
+		t.Fatalf("scratch was written into the manifest directory: %v", entries)
+	}
+}
