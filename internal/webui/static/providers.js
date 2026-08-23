@@ -9,7 +9,7 @@ const PROVIDERS = {
     params: {
       type:     { options: ["", "movie", "show"], hint: "Item type" },
       section:  { hint: "Library section ID", default: "{{ .MovieSectionId }}" },
-      period:   { options: ["", "DAY", "WEEK", "MONTH", "YEAR"], hint: "Viewed-within window", default: "{{ .PeriodInterval }}" },
+      period:   { options: ["", "{{ .PeriodInterval }}", "DAY", "WEEK", "MONTH", "YEAR"], hint: "Viewed-within window", default: "{{ .PeriodInterval }}" },
       limit:    { hint: "Max items", default: "5" },
       trailers: { options: ["", "true"], hint: "Also resolve each item's trailer URL (feeds trailer backgrounds)" },
     },
