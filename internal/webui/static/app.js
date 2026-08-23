@@ -362,7 +362,111 @@ actions["remove-element"] = (d) => {
   renderLayouts();
 };
 
-function renderScenes() {}
+function sceneDefaults(kind) {
+  const first = (map) => Object.keys(map)[0] || "";
+  return {
+    image:  { kind: "image", file: "", duration: 4 },
+    render: { kind: "render", layout: first(state.layouts), duration: 6, vars: {}, background: null },
+    clips:  { kind: "clips", source: first(state.data), perClip: 4, label: "" },
+  }[kind];
+}
+
+function renderScenes() {
+  const cards = state.scenes.map((sc, i) => sceneCard(sc, i)).join("");
+  $("#section-scenes").innerHTML = `
+    <h2>Scenes</h2>
+    <p class="muted">The timeline — played top to bottom.</p>
+    ${cards || `<p class="empty">No scenes yet — a pre-roll needs at least one.</p>`}
+    <button class="btn" data-action="add-scene" data-kind="render">+ Rendered frame</button>
+    <button class="btn ghost" data-action="add-scene" data-kind="clips">+ Clip montage</button>
+    <button class="btn ghost" data-action="add-scene" data-kind="image">+ Still image</button>`;
+}
+
+function sceneCard(sc, i) {
+  const base = `scenes.${i}`;
+  const head = `<div class="subcard-head">
+    <strong>#${i + 1}</strong>
+    ${select(`${base}.kind`, sc.kind, ["image", "render", "clips"],
+      { rerender: "scene-kind", attrs: `data-index="${i}"` })}
+    <span class="spacer"></span>
+    <button class="btn ghost" data-action="move-scene" data-index="${i}" data-dir="-1">↑</button>
+    <button class="btn ghost" data-action="move-scene" data-index="${i}" data-dir="1">↓</button>
+    <button class="btn ghost danger" data-action="remove-scene" data-index="${i}">×</button>
+  </div>`;
+  return `<div class="subcard">${head}${sceneFields(sc, i, base)}</div>`;
+}
+
+function sceneFields(sc, i, base) {
+  if (sc.kind === "image") {
+    return `<div class="grid2">
+      ${field("Image file", textInput(`${base}.file`, sc.file, { placeholder: "media/common/intro.png" }))}
+      ${field("Duration (s)", numInput(`${base}.duration`, sc.duration, { min: 0 }))}
+    </div>`;
+  }
+  if (sc.kind === "clips") {
+    return `<div class="grid2">
+      ${field("Data source", select(`${base}.source`, sc.source, Object.keys(state.data)),
+        "Items need trailer/media URLs — e.g. plex.trailers, or trailers: true")}
+      ${field("Seconds per clip", numInput(`${base}.perClip`, sc.perClip, { min: 0 }))}
+      ${field("Label layout", select(`${base}.label`, sc.label ?? "", ["", ...Object.keys(state.layouts)], { emptyLabel: "(no label)" }),
+        "Overlaid per clip with that item's Name/Rank in scope — use a transparent background")}
+    </div>`;
+  }
+  // render
+  const bg = sc.background;
+  return `<div class="grid2">
+      ${field("Layout", select(`${base}.layout`, sc.layout, Object.keys(state.layouts)))}
+      ${field("Duration (s)", numInput(`${base}.duration`, sc.duration, { min: 0 }))}
+    </div>
+    ${varRows(sc, i, base)}
+    <label class="check"><input type="checkbox" data-action-toggle="scene-bg" data-index="${i}"${bg ? " checked" : ""}> Dynamic background</label>
+    ${bg ? `<div class="grid2">
+      ${field("Source", select(`${base}.background.source`, bg.source, Object.keys(state.data)))}
+      ${field("Mode", select(`${base}.background.mode`, bg.mode, ["art", "poster", "trailers"]),
+        "art/poster: still images · trailers: muted video montage")}
+      ${field("Tile", select(`${base}.background.tile`, bg.tile ?? "", ["", "cover", "grid", "sequence"], { emptyLabel: "cover (default)" }),
+        "grid: up to 4 items 2×2 · sequence: trailers back to back")}
+      ${field("Dim", `<input type="range" data-path="${esc(base)}.background.dim" data-type="number" min="0" max="1" step="0.05" value="${bg.dim ?? 0}">`,
+        "0 = untouched, 1 = black — keeps overlaid text legible")}
+      ${field("Item limit", numInput(`${base}.background.limit`, bg.limit ?? 0, { int: true, min: 0 }), "0 = all")}
+    </div>` : ""}`;
+}
+
+// Vars feed extra template variables into the scene's layout, so one layout
+// serves many scenes with different text.
+function varRows(sc, i, base) {
+  const vars = sc.vars || {};
+  const rows = Object.entries(vars).map(([k, v]) => `<div class="kv">
+    <input type="text" data-rename="${esc(base)}.vars" data-old="${esc(k)}" value="${esc(k)}">
+    <input type="text" data-path="${esc(base)}.vars.${esc(k)}" value="${esc(v)}">
+    <button class="btn ghost danger" data-action="remove-var" data-index="${i}" data-key="${esc(k)}">×</button>
+  </div>`).join("");
+  return `<h3>Template variables</h3>${rows}
+    <button class="btn ghost" data-action="add-var" data-index="${i}">+ Add variable</button>`;
+}
+
+actions["add-scene"] = (d) => { state.scenes.push(sceneDefaults(d.kind)); renderScenes(); };
+actions["remove-scene"] = (d) => { state.scenes.splice(+d.index, 1); renderScenes(); };
+actions["move-scene"] = (d) => {
+  const i = +d.index, j = i + +d.dir;
+  if (j < 0 || j >= state.scenes.length) return;
+  [state.scenes[i], state.scenes[j]] = [state.scenes[j], state.scenes[i]];
+  renderScenes();
+};
+actions["add-var"] = (d) => {
+  const sc = state.scenes[+d.index];
+  sc.vars = sc.vars || {};
+  sc.vars[uniqueKey(sc.vars, "Var")] = "";
+  renderScenes();
+};
+actions["remove-var"] = (d) => { delete state.scenes[+d.index].vars[d.key]; renderScenes(); };
+
+// Changing kind swaps the scene for that kind's defaults — stale fields from
+// the old kind (file on a render scene, layout on clips) must not linger.
+rerenderHooks["scene-kind"] = (dataset) => {
+  state.scenes[+dataset.index] = sceneDefaults(state.scenes[+dataset.index].kind);
+};
+
 function renderToolbar() {}
 
 function renderAll() {
@@ -393,6 +497,15 @@ $("#editor").addEventListener("input", (e) => {
 
 $("#editor").addEventListener("change", (e) => {
   const t = e.target;
+  if (t.dataset.actionToggle === "scene-bg") {
+    const sc = state.scenes[+t.dataset.index];
+    sc.background = t.checked
+      ? { source: Object.keys(state.data)[0] || "", mode: "art", tile: "", dim: 0.35, limit: 0 }
+      : null;
+    renderScenes();
+    scheduleConvert();
+    return;
+  }
   if (t.dataset.rename) {
     renameKey(t.dataset.rename, t.dataset.old, t.value.trim());
     return;
