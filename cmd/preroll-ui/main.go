@@ -21,7 +21,7 @@ func main() {
 	dir := flag.String("manifest-dir", envOr("MANIFEST_DIR", "manifests"), "directory manifests are read from and saved to")
 	media := flag.String("media-dir", envOr("MEDIA_DIR", "media"), "comma-separated directories the file picker may browse and serve from")
 	renderBin := flag.String("render-bin", envOr("RENDER_BIN", defaultRenderBin()), "path to the plex-pre-rolls binary; empty disables rendering from the UI")
-	renderDir := flag.String("render-dir", envOr("RENDER_DIR", "pre-roll-output/.ui-renders"), "scratch directory for UI-triggered renders")
+	renderDir := flag.String("render-dir", envOr("RENDER_DIR", webui.DefaultRenderDir), "scratch directory for UI-triggered renders")
 	workDir := flag.String("work-dir", envOr("WORK_DIR", ""), "working directory renders run in; empty means this process's own")
 	flag.Parse()
 
