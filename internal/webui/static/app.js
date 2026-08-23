@@ -432,7 +432,7 @@ function sceneFields(sc, i, base) {
         "art/poster: still images · trailers: muted video montage")}
       ${field("Tile", select(`${base}.background.tile`, bg.tile ?? "", ["", "cover", "grid", "sequence"], { emptyLabel: "cover (default)" }),
         "grid: up to 4 items 2×2 · sequence: trailers back to back")}
-      ${field("Dim", `<input type="range" data-path="${esc(base)}.background.dim" data-type="number" min="0" max="1" step="0.05" value="${bg.dim ?? 0}">`,
+      ${field("Dim", `<input type="range" data-path="${esc(base)}.background.dim" data-type="number" min="0" max="1" step="0.05" value="${esc(bg.dim ?? 0)}">`,
         "0 = untouched, 1 = black — keeps overlaid text legible")}
       ${field("Item limit", numInput(`${base}.background.limit`, bg.limit ?? 0, { int: true, min: 0 }), "0 = all")}
     </div>` : ""}`;

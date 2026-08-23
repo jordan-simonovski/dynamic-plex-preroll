@@ -10,7 +10,7 @@
 <header class="topbar">
   <h1>Pre-roll <span>Studio</span></h1>
   <div class="topbar-actions" id="manifest-actions"></div>
-  <span id="status"></span>
+  <span id="status" aria-live="polite"></span>
 </header>
 <main class="split">
   <div class="editor" id="editor">
@@ -25,7 +25,7 @@
       <h2>manifest.yaml</h2>
       <button id="copy-yaml" class="btn ghost">Copy</button>
     </div>
-    <ul id="errors" class="errors"></ul>
+    <ul id="errors" class="errors" aria-live="polite" aria-label="Validation errors"></ul>
     <pre id="yaml"><code></code></pre>
   </aside>
 </main>
