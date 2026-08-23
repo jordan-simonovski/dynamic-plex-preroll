@@ -252,6 +252,7 @@ actions["remove-selected-element"] = () => {
   if (!layout || selection.element == null) return;
   layout.elements.splice(selection.element, 1);
   selectElement(null);
+  scheduleConvert();
 };
 actions["add-element-here"] = (d) => {
   const layout = currentLayout();
@@ -266,6 +267,7 @@ actions["add-element-here"] = (d) => {
     : { type: "text", text: "Text", x: Math.round(width / 2), y: Math.round(height / 2),
         size: Math.round(height * 0.09), color: "white", align: "center" });
   selectElement(layout.elements.length - 1);
+  scheduleConvert();
 };
 // A new layout is pointed at by the scene that asked for it, replacing
 // whatever it named before — a layout nothing references is unreachable from
@@ -287,11 +289,13 @@ actions["add-layout"] = () => {
   if (sc && sc.kind === "clips") sc.label = name;
   selection.element = 0;
   renderAll(); // the timeline rail and inspector both need repainting
+  scheduleConvert();
 };
 actions["remove-layout"] = (d) => {
   delete state.layouts[d.name];
   selection.element = null;
   renderAll();
+  scheduleConvert();
 };
 
 // Changing a render scene's layout (or a clips scene's label layout)
@@ -317,8 +321,9 @@ actions["add-var"] = (d) => {
   sc.vars = sc.vars || {};
   sc.vars[uniqueKey(sc.vars, "Var")] = "";
   renderAll();
+  scheduleConvert();
 };
-actions["remove-var"] = (d) => { delete state.scenes[+d.index].vars[d.key]; renderAll(); };
+actions["remove-var"] = (d) => { delete state.scenes[+d.index].vars[d.key]; renderAll(); scheduleConvert(); };
 
 // Changing kind swaps the scene for that kind's defaults — stale fields from
 // the old kind (file on a render scene, layout on clips) must not linger. That
@@ -447,8 +452,9 @@ actions["add-param"] = (d) => {
   const ds = state.data[d.ds];
   ds.params[uniqueKey(ds.params, "filter")] = "";
   renderInspector();
+  scheduleConvert();
 };
-actions["remove-param"] = (d) => { delete state.data[d.ds].params[d.key]; renderInspector(); };
+actions["remove-param"] = (d) => { delete state.data[d.ds].params[d.key]; renderInspector(); scheduleConvert(); };
 // testDataSeq is app.js's convertSeq / stage.js's stageDataSeq pattern, keyed
 // by SOURCE NAME. "Test this source" runs the real provider against Plex, which
 // is slow and answers out of order, and edit-then-retest is the normal way to

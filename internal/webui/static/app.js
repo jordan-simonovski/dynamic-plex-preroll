@@ -304,12 +304,18 @@ function onEditorChange(e) {
   }
 }
 
+// Pure dispatch: every action owns its own repaint. It used to call
+// renderStage() and scheduleConvert() after EVERY action, so an action that had
+// already repainted (most of them — via renderAll(), onStateChange() or
+// selectElement()) drew the canvas twice, and a pure selection click posted a
+// convert for a manifest that had not changed. Of the two ways to fix that —
+// actions signalling back that they rendered, or each action doing its own
+// work — this is the boring one: nothing new to remember at the call site, and
+// "did this action repaint?" is answerable by reading the action.
 function onEditorClick(e) {
   const btn = e.target.closest("[data-action]");
   if (!btn) return;
   actions[btn.dataset.action]?.(btn.dataset);
-  renderStage();
-  scheduleConvert();
 }
 
 // The inspector and the timeline rail use the same data-path/data-action
