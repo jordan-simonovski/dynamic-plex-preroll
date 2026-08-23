@@ -121,6 +121,106 @@ func TestSaveThenListGetDelete(t *testing.T) {
 	}
 }
 
+func TestSaveBacksUpExistingFile(t *testing.T) {
+	ts, dir := newTestServer(t)
+	// A hand-written manifest: comments and all. ToYAML can't keep them, so
+	// the save must leave the original bytes behind as a .bak.
+	original := "# hand-written header\nname: t\nresolution: 1920x1080\nfps: 24\n" +
+		"output: output/t.mp4\nscenes: [{kind: image, file: a.png, duration: 3}]\n"
+	path := filepath.Join(dir, "t.yaml")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res := do(t, "PUT", ts.URL+"/api/manifests/t.yaml", validJSON); res.StatusCode != 200 {
+		t.Fatalf("save: status %d", res.StatusCode)
+	}
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if string(bak) != original {
+		t.Fatalf("backup is not the original bytes:\n%s", bak)
+	}
+
+	// The .bak must fall outside the *.yaml/*.yml globs the renderer and the
+	// list endpoint use, or the batch run would try to render it.
+	res := do(t, "GET", ts.URL+"/api/manifests", "")
+	var names []string
+	json.NewDecoder(res.Body).Decode(&names)
+	if len(names) != 1 || names[0] != "t.yaml" {
+		t.Fatalf("list must show only the manifest, got %v", names)
+	}
+
+	// The save left no temp files behind either.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want t.yaml + t.yaml.bak, got %v", entries)
+	}
+
+	// A first save of a new name has nothing to back up.
+	if res := do(t, "PUT", ts.URL+"/api/manifests/fresh.yaml", validJSON); res.StatusCode != 200 {
+		t.Fatalf("save fresh: status %d", res.StatusCode)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fresh.yaml.bak")); !os.IsNotExist(err) {
+		t.Fatal("backed up a file that did not exist")
+	}
+}
+
+func TestConvertOversizedBodyStillJSON(t *testing.T) {
+	// The UI parses every convert response as JSON, so even a body over the
+	// MaxBytesReader cap must come back 200 with the error in the list.
+	ts, _ := newTestServer(t)
+	res := do(t, "POST", ts.URL+"/api/convert", strings.Repeat("x", maxBody+1))
+	var out struct {
+		Errors []string `json:"errors"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if res.StatusCode != 200 || len(out.Errors) == 0 {
+		t.Fatalf("want 200 with an error, got %d %v", res.StatusCode, out.Errors)
+	}
+}
+
+func TestHostHeaderRejected(t *testing.T) {
+	// DNS rebinding always arrives with a name in Host; IP literals and
+	// localhost are how a human reaches a LAN tool.
+	ts, _ := newTestServer(t)
+	for _, host := range []string{"evil.example.com", "preroll.lan", "evil.example.com:8382"} {
+		req, err := http.NewRequest("GET", ts.URL+"/api/manifests", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != 403 {
+			t.Errorf("host %q: want 403, got %d", host, res.StatusCode)
+		}
+	}
+	for _, host := range []string{"127.0.0.1:8382", "192.168.1.10:8382", "localhost:8382", "localhost", "[::1]:8382"} {
+		req, err := http.NewRequest("GET", ts.URL+"/api/manifests", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != 200 {
+			t.Errorf("host %q: want 200, got %d", host, res.StatusCode)
+		}
+	}
+}
+
 func TestSaveRejectsInvalidManifest(t *testing.T) {
 	ts, dir := newTestServer(t)
 	res := do(t, "PUT", ts.URL+"/api/manifests/bad.yaml", `{"name":"bad"}`)
