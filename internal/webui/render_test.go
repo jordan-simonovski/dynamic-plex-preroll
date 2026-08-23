@@ -319,3 +319,22 @@ func TestRenderTimeoutKillsTheRendererAndFreesTheSlot(t *testing.T) {
 		t.Fatalf("second render failed: %+v", out)
 	}
 }
+
+// A renderer that exits 0 without writing the file must become a failed job,
+// not a <video> pointed at nothing.
+func TestRenderFailsWhenNoVideoIsProduced(t *testing.T) {
+	ts, _ := renderServer(t, "#!/bin/sh\nexit 0\n")
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	var started struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(res.Body).Decode(&started)
+
+	out := waitForJob(t, ts, started.ID)
+	if out["state"] != "failed" {
+		t.Fatalf("want failed when no video was written, got %+v", out)
+	}
+	if res := do(t, "GET", ts.URL+"/api/render/"+started.ID+"/video", ""); res.StatusCode != 404 {
+		t.Fatalf("want 404 for a render that produced no video, got %d", res.StatusCode)
+	}
+}
