@@ -31,20 +31,55 @@ test("geometry.js runs with no DOM in scope at all", () => {
   // A bare vm context has no document, window or canvas, so any reference to
   // one is a ReferenceError. Loading and exercising the module in here proves
   // the purity the whole plan's headless verifiability rests on.
+  //
+  // A DOM reference hiding in a function this block never calls would be
+  // invisible to it, so every exported function is driven here with
+  // representative arguments — not just textBaselines/lineBox — so a
+  // ReferenceError anywhere in the file surfaces. (Proven by inserting
+  // `void document;` into gridCells, a function previously untouched by this
+  // test, and confirming the suite failed before this change; see the task
+  // report.)
   const ctx = vm.createContext({});
   const src = fs.readFileSync(GEOMETRY_PATH, "utf8");
   assert.doesNotThrow(() => vm.runInContext(src, ctx, { filename: "geometry.js" }));
   const G = vm.runInContext("Geometry", ctx);
-  // Values cross a realm boundary, so compare structurally rather than by
-  // prototype identity.
-  assert.strictEqual(
-    JSON.stringify(G.textBaselines({ y: 500, size: 80, lineHeight: 100 }, 3)),
-    JSON.stringify([400, 500, 600]),
+  const measure = fakeMeasure(100);
+  // Objects/arrays returned by G cross a realm boundary, so deepStrictEqual's
+  // prototype check fails them even when their contents match; compare
+  // structurally via JSON instead. Primitives (numbers, strings, booleans)
+  // are unaffected and use plain strictEqual.
+  const same = (actual, expected) => assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected));
+
+  assert.strictEqual(G.lineHeight({ size: 100, lineHeight: 0 }), 120);
+  same(G.textBaselines({ y: 500, size: 80, lineHeight: 100 }, 3), [400, 500, 600]);
+  same(G.listBaselines({ startY: 320, stepY: 96 }, 2), [320, 416]);
+  assert.strictEqual(G.align({ align: "CENTRE" }), "center");
+  same(G.lineBox({ x: 0, align: "center" }, "abcd", 100, measure), { x: -100, y: 20, w: 200, h: 100 });
+  same(
+    G.elementBox({ type: "text", x: 0, y: 500, size: 100, lineHeight: 100, align: "left" }, ["ab", "abcdef"], measure),
+    { x: 0, y: 370, w: 300, h: 200 },
   );
-  assert.strictEqual(
-    JSON.stringify(G.lineBox({ x: 0, align: "center" }, "abcd", 100, fakeMeasure(100))),
-    JSON.stringify({ x: -100, y: 20, w: 200, h: 100 }),
-  );
+  const boxA = { x: 0, y: 0, w: 10, h: 10 };
+  const boxB = { x: 20, y: -5, w: 10, h: 10 };
+  same(G.union(boxA, boxB), { x: 0, y: -5, w: 30, h: 15 });
+  assert.ok(G.contains(boxA, 5, 5));
+  assert.strictEqual(G.hitTest([boxA, boxB], 25, 0), 1);
+  same(G.handlePoint(boxA), { x: 10, y: 10 });
+  assert.ok(G.onHandle(boxA, 10, 10, 1));
+  same(G.moveTo({ type: "text", x: 10, y: 20 }, 5, -5), { x: 15, y: 15 });
+  assert.strictEqual(G.resizeSize(100, 100, 50), 150);
+  const targets = G.snapTargets(1920, 1080, [boxA]);
+  same(G.snap(958, targets.xs, 8), { value: 960, guide: 960 });
+  same(G.safeArea(1000, 1000, 0.1), { x: 100, y: 100, w: 800, h: 800 });
+  same(G.coverRect(2000, 1000, 1000, 1000), { sx: 500, sy: 0, sw: 1000, sh: 1000 });
+  same(G.gridCells(1, 1920, 1080), [{ x: 0, y: 0, w: 1920, h: 1080 }]);
+  assert.strictEqual(G.dimAlpha(2), 1);
+  assert.ok(G.isTransparent("none"));
+  same(G.toManifest(490, 320, { left: 10, top: 20, width: 960 }, 1920), { x: 960, y: 600, scale: 0.5 });
+  // Constants are also part of the exported surface.
+  assert.strictEqual(G.DEFAULT_TEXT_COLOR, "white");
+  assert.strictEqual(G.DEFAULT_BG_COLOR, "black");
+  assert.strictEqual(G.DEFAULT_LINE_SPACING, 1.2);
 });
 
 // ---- baselines and stacking (render.go drawLines / the list branch) --------
@@ -141,6 +176,20 @@ test("union covers both boxes", () => {
     { x: 0, y: -5, w: 30, h: 15 });
 });
 
+test("contains is inclusive on all four edges", () => {
+  const box = { x: 10, y: 20, w: 100, h: 50 };
+  assert.ok(Geometry.contains(box, 10, 20), "top-left corner");
+  assert.ok(Geometry.contains(box, 110, 70), "bottom-right corner");
+  assert.ok(Geometry.contains(box, 10, 45), "left edge, mid-height");
+  assert.ok(Geometry.contains(box, 110, 45), "right edge, mid-height");
+  assert.ok(Geometry.contains(box, 60, 20), "top edge, mid-width");
+  assert.ok(Geometry.contains(box, 60, 70), "bottom edge, mid-width");
+  assert.ok(!Geometry.contains(box, 9.999, 45), "just outside the left edge");
+  assert.ok(!Geometry.contains(box, 110.001, 45), "just outside the right edge");
+  assert.ok(!Geometry.contains(box, 60, 19.999), "just outside the top edge");
+  assert.ok(!Geometry.contains(box, 60, 70.001), "just outside the bottom edge");
+});
+
 test("hitTest picks the topmost box, matching draw order", () => {
   const boxes = [
     { x: 0, y: 0, w: 100, h: 100 },
@@ -185,6 +234,13 @@ test("snapping locks onto the nearest target inside the tolerance", () => {
   assert.deepStrictEqual(Geometry.snap(4, [0, 6], 8), { value: 6, guide: 6 }, "nearest, not first");
 });
 
+test("snap ties resolve to the last equidistant target, deliberately", () => {
+  // 5 is exactly 5 away from both 0 and 10; the loop's `<=` means the later
+  // target in the array wins.
+  assert.deepStrictEqual(Geometry.snap(5, [0, 10], 8), { value: 10, guide: 10 });
+  assert.deepStrictEqual(Geometry.snap(5, [10, 0], 8), { value: 0, guide: 0 });
+});
+
 test("snapTargets offers the canvas edges, its centre, and every other box", () => {
   const t = Geometry.snapTargets(1920, 1080, [{ x: 100, y: 200, w: 100, h: 100 }]);
   assert.deepStrictEqual(t.xs, [0, 960, 1920, 100, 150, 200]);
@@ -219,6 +275,15 @@ test("coverRect agrees with render.go's resize-then-crop on a non-square fill", 
   assert.strictEqual(r.sw, 800);
   assert.strictEqual(r.sh, 450);
   assert.strictEqual(r.sy, 175);
+});
+
+test("gridCells falls back to one full-rect cell for <=1 image, matching render.go's cover fall-through", () => {
+  // render.go's buildImageBackground only takes the grid path when
+  // len(rb.Images) > 1; a single image (or zero, though that's the
+  // caller's empty-background case) renders via coverResize onto the
+  // whole canvas, never a half-height 2x2 tile.
+  assert.deepStrictEqual(Geometry.gridCells(1, 1920, 1080), [{ x: 0, y: 0, w: 1920, h: 1080 }]);
+  assert.deepStrictEqual(Geometry.gridCells(0, 1920, 1080), [{ x: 0, y: 0, w: 1920, h: 1080 }]);
 });
 
 test("gridCells is 2x2, 2x1 for exactly two, and never more than four", () => {
