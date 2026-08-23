@@ -4,6 +4,16 @@ services:
   plex-pre-roll:
     build:
       context: .
+      target: plex-pre-rolls
     env_file: .env
     volumes:
       - ./pre-roll-output/:/build/output/
+
+  # One-shot helper to mint a Plex token. Not started by `docker compose up`;
+  # run it explicitly:
+  #   docker compose run --rm plex-token -login you@example.com
+  plex-token:
+    build:
+      context: .
+      target: plex-token
+    profiles: ["tools"]
