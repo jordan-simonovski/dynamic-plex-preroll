@@ -143,6 +143,14 @@ function flash(msg, isError = false) {
   flashTimer = setTimeout(() => { el.textContent = ""; }, 4000);
 }
 
+// ---- delegated events (declared here so section modules below can register
+// handlers at top-level script scope, before the listeners are wired up) ----
+const actions = {}; // sections register handlers: actions["add-data"] = (dataset) => {...}
+// rerenderHooks: selects that change the form's shape declare
+// data-rerender="<hook>"; a hook may reset dependent state before re-render.
+// Later tasks add entries ("provider", "scene-kind").
+const rerenderHooks = {};
+
 // ---- sections --------------------------------------------------------------
 function deriveOutput(name) {
   return name ? `output/${name}.mp4` : "";
@@ -187,8 +195,79 @@ function renderAudio() {
   };
 }
 
-// Replaced by later tasks.
-function renderData() {}
+function defaultParams(provider) {
+  const params = {};
+  for (const [key, p] of Object.entries(PROVIDERS[provider].params))
+    if (p.default) params[key] = p.default;
+  return params;
+}
+
+function renderData() {
+  const cards = Object.entries(state.data).map(([name, ds]) => dataCard(name, ds)).join("");
+  $("#section-data").innerHTML = `
+    <h2>Data sources</h2>
+    <p class="muted">Named feeds of Plex items. Lists, clip scenes and backgrounds pull from these by name.</p>
+    ${cards || `<p class="empty">No data sources yet.</p>`}
+    <button class="btn" data-action="add-data">+ Add data source</button>`;
+}
+
+function dataCard(name, ds) {
+  const meta = PROVIDERS[ds.provider] || { params: {} };
+  const rows = Object.entries(meta.params).map(([key, p]) => {
+    const path = `data.${name}.params.${key}`;
+    const val = ds.params?.[key] ?? "";
+    const input = p.options ? select(path, val, p.options) : textInput(path, val, { placeholder: p.default || "" });
+    return field(key, input, p.hint);
+  }).join("");
+  return `<div class="subcard">
+    <div class="subcard-head">
+      <input type="text" class="name-input" data-rename="data" data-old="${esc(name)}" value="${esc(name)}">
+      <button class="btn ghost danger" data-action="remove-data" data-name="${esc(name)}">Remove</button>
+    </div>
+    ${field("Provider",
+      select(`data.${name}.provider`, ds.provider, Object.keys(PROVIDERS),
+        { rerender: "provider", attrs: `data-ds="${esc(name)}"` }),
+      meta.hint)}
+    <div class="grid2">${rows}</div>
+    ${meta.extra ? extraParamRows(name, ds, meta) : ""}
+  </div>`;
+}
+
+// plex.section passes unknown params through to Plex as filters; these rows
+// edit the params not covered by the provider's declared knobs.
+function extraParamRows(name, ds, meta) {
+  const extras = Object.entries(ds.params || {}).filter(([k]) => !(k in meta.params));
+  const rows = extras.map(([k, v]) => `<div class="kv">
+    <input type="text" data-rename="data.${esc(name)}.params" data-old="${esc(k)}" value="${esc(k)}">
+    <input type="text" data-path="data.${esc(name)}.params.${esc(k)}" value="${esc(v)}">
+    <button class="btn ghost danger" data-action="remove-param" data-ds="${esc(name)}" data-key="${esc(k)}">×</button>
+  </div>`).join("");
+  return `<h3>Extra Plex filters</h3>
+    <p class="muted">Passed straight through as query filters, e.g. decade=1990, year>>=2000.</p>
+    ${rows}
+    <button class="btn ghost" data-action="add-param" data-ds="${esc(name)}">+ Add filter</button>`;
+}
+
+actions["add-data"] = () => {
+  const name = uniqueKey(state.data, "source");
+  state.data[name] = { provider: "plex.top", params: defaultParams("plex.top") };
+  renderAll();
+};
+actions["remove-data"] = (d) => { delete state.data[d.name]; renderAll(); };
+actions["add-param"] = (d) => {
+  const ds = state.data[d.ds];
+  ds.params[uniqueKey(ds.params, "filter")] = "";
+  renderData();
+};
+actions["remove-param"] = (d) => { delete state.data[d.ds].params[d.key]; renderData(); };
+
+// Switching provider resets params to that provider's defaults — stale keys
+// would otherwise leak through plex.section's passthrough as bogus filters.
+rerenderHooks["provider"] = (dataset) => {
+  const ds = state.data[dataset.ds];
+  ds.params = defaultParams(ds.provider);
+};
+
 function renderLayouts() {}
 function renderScenes() {}
 function renderToolbar() {}
@@ -200,9 +279,6 @@ function renderAll() {
   renderLayouts();
   renderScenes();
 }
-
-// ---- delegated events ------------------------------------------------------
-const actions = {}; // sections register handlers: actions["add-data"] = (dataset) => {...}
 
 $("#editor").addEventListener("input", (e) => {
   const path = e.target.dataset.path;
@@ -221,11 +297,6 @@ $("#editor").addEventListener("input", (e) => {
   }
   scheduleConvert();
 });
-
-// rerenderHooks: selects that change the form's shape declare
-// data-rerender="<hook>"; a hook may reset dependent state before re-render.
-// Later tasks add entries ("provider", "scene-kind").
-const rerenderHooks = {};
 
 $("#editor").addEventListener("change", (e) => {
   const t = e.target;
