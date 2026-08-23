@@ -129,6 +129,13 @@ function stagePointerPos(e) {
 }
 
 function stagePointerDown(e) {
+  // Any press on the stage means the user is interacting with the stage, not
+  // the data panel — leave data mode unconditionally, once per gesture, so
+  // it covers both selectElement()'s renderInspector() call below AND
+  // stageEndDrag()'s later one at release, without needing a check in either
+  // (the Task 15 brief names a since-renamed "selectAt"; on disk this
+  // function, plus stage.js's stageKeyNav, are the two real entry points).
+  selection.dataSource = null;
   // A gesture whose pointerup never arrived (a browser dropping the event, a
   // second pointer on a touchscreen) would otherwise be overwritten here still
   // holding capture. Closing it first means there is no path to a wedged drag.

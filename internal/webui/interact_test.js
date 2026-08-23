@@ -104,10 +104,10 @@ const ctx = vm.createContext({
   console,
 });
 
-// inspector.js, sections.js and app.js are left out on purpose: the three
-// functions interact.js calls into them are stubbed below as counters, which
-// is exactly what needs asserting — that a gesture re-renders the inspector
-// and schedules ONE convert, at the end, not per frame.
+// inspector.js and app.js are left out on purpose: the functions interact.js
+// calls into them are stubbed below as counters, which is exactly what needs
+// asserting — that a gesture re-renders the inspector and schedules ONE
+// convert, at the end, not per frame.
 const staticDir = path.join(__dirname, "static");
 for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
@@ -122,6 +122,8 @@ globalThis.__t = {
   setState: (s) => { state = normalize(s); selection = { sceneIndex: 0, element: null, dataSource: null }; },
   setSelected: (i) => { selection.element = i; },
   selected: () => selection.element,
+  setDataSource: (n) => { selection.dataSource = n; },
+  dataSource: () => selection.dataSource,
   drag: () => stageDrag,
   guides: () => stageDragGuides,
   elements: () => currentLayout().elements,
@@ -560,6 +562,27 @@ fresh();
 
   stagePointerUp({ pointerId: idB });
   eq("two-finger: B's OWN release ends B's gesture", __t.drag(), null);
+}
+
+// ---- Task 15: a press on the stage leaves data mode -------------------------
+// Data sources are edited in their own inspector mode (selection.dataSource);
+// a click on the stage means the user is looking at the scene/element again,
+// so it must clear back to null — checked once here at the real entry point
+// (stagePointerDown), unconditionally and before either selectElement()'s own
+// renderInspector() or a later stageEndDrag()'s.
+{
+  fresh();
+  __t.setDataSource("top");
+  eq("data-mode: armed before the press", __t.dataSource(), "top");
+  press(150, 180); // hits the text element
+  eq("data-mode: a press on an element leaves data mode", __t.dataSource(), null);
+  release(150, 180);
+
+  fresh();
+  __t.setDataSource("");
+  press(5, 5); // empty canvas — selects the scene, not an element
+  eq("data-mode: a press on EMPTY canvas leaves data mode too", __t.dataSource(), null);
+  release(5, 5);
 }
 
 // ---- Interact runs with no DOM in scope at all -----------------------------

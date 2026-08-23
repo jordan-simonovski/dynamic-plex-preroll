@@ -156,3 +156,14 @@ function manifestDimensions() {
   if (!m) return { width: 1920, height: 1080 };
   return { width: parseInt(m[1], 10) || 1920, height: parseInt(m[2], 10) || 1080 };
 }
+
+// renderAll repaints every view. state.js owns it because state.js is what
+// calls onStateChange, and every view file is loaded before app.js boots.
+// Moved here from the retired sections.js, whose own renderAll() also
+// repainted its three phase-1 cards — those are gone, so only the rail, the
+// stage and the inspector remain.
+function renderAll() {
+  renderTimeline();
+  renderStage();
+  renderInspector();
+}

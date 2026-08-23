@@ -65,12 +65,20 @@ const document = {
   fonts: { add() {} },
 };
 
+// A test arms `resolveResponse` before calling actions["test-data"], mirroring
+// stage_test.js's own stageFetch — apiResolveData (api.js) is the only fetch
+// call inspector.js's new "Test this source" action makes.
+let resolveResponse = { configured: false, sources: {} };
+function inspectorFetch() {
+  return Promise.resolve({ ok: true, json: async () => resolveResponse });
+}
+
 const ctx = vm.createContext({
   document,
   window: { addEventListener() {}, devicePixelRatio: 1 },
   FontFace: class { load() { return Promise.reject(new Error("no font server in a test")); } },
   Image: class { set src(v) { this._src = v; } },
-  fetch: () => Promise.resolve({ ok: true, json: async () => ({}) }),
+  fetch: inspectorFetch,
   setTimeout, clearTimeout,
   confirm: () => true,
   navigator: { clipboard: { writeText: async () => {} } },
@@ -84,7 +92,7 @@ const ctx = vm.createContext({
 const staticDir = path.join(__dirname, "static");
 // app.js is left out on purpose: it boots the toolbar and the network. The
 // listeners it registers are thin — every decision they reach lives here.
-for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "pickers.js", "inspector.js", "timeline.js", "sections.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "pickers.js", "inspector.js", "timeline.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 vm.runInContext(`globalThis.__t = {
@@ -92,14 +100,19 @@ vm.runInContext(`globalThis.__t = {
   getState: () => state,
   select: (scene, element) => { selection.sceneIndex = scene; selection.element = element ?? null; },
   selected: () => selection.element,
-  // \`actions\`/\`rerenderHooks\` are top-level consts, so they live in the shared
-  // script scope rather than on the context's global object.
-  actions, rerenderHooks,
+  setDataSource: (n) => { selection.dataSource = n; },
+  dataSource: () => selection.dataSource,
+  // \`actions\`/\`rerenderHooks\`/\`testResults\`/\`PROVIDERS\` are top-level
+  // consts, so they live in the shared script scope rather than on the
+  // context's global object.
+  actions, rerenderHooks, testResults, PROVIDERS,
 };`, ctx);
 
 const { __t, inspectorTarget, elementPath, renderInspector, selectElement,
   stagePointerDown, stagePointerUp,
-  currentLayout, layoutSection } = ctx;
+  currentLayout, layoutSection, dataInspector, dataListPanel, dataSourcePanel,
+  renderTestResult } = ctx;
+const PROVIDERS = __t.PROVIDERS;
 const { actions, rerenderHooks } = ctx.__t;
 const panel = () => document.querySelector("#inspector").innerHTML;
 
@@ -112,6 +125,9 @@ function check(name, cond, detail) {
 }
 const eq = (name, got, want) => check(name, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 const has = (name, html, needle) => check(name, html.includes(needle), `missing ${needle}`);
+const not = (name, html, needle) => check(name, !html.includes(needle), `should not contain ${needle}`);
+const same = (name, got, want) =>
+  check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
 const FIXTURE = () => ({
   resolution: "1920x1080",
@@ -442,8 +458,236 @@ const clickAt = (cx, cy) => {
     (html.match(/aria-current="true"/g) || []).length, 1);
 }
 
-if (failures) {
-  console.error(`\n${failures} check(s) failed`);
-  process.exit(1);
+// ---- Task 15: the retired Data card's property audit -----------------------
+// Every property the old dataCard() exposed (sections.js), checked reachable
+// through the new data-source inspector mode — for EVERY source, not just the
+// first, since the panel shows one source at a time via selection.dataSource.
+const DATA_FIXTURE = () => ({
+  data: {
+    topMovies: { provider: "plex.top", params: { section: "1", limit: "5" } },
+    decade: { provider: "plex.section", params: { section: "1", decade: "1990" } },
+  },
+  layouts: {}, scenes: [],
+});
+
+{
+  __t.setState(DATA_FIXTURE());
+
+  // The list panel: every source shown, labelled by its provider's title.
+  __t.setDataSource("");
+  const list = dataInspector();
+  has("data-list: topMovies is listed", list, `data-action="select-data" data-name="topMovies"`);
+  has("data-list: decade is listed", list, `data-action="select-data" data-name="decade"`);
+  has("data-list: labelled by the provider's plain-English title", list, "Most watched");
+  has("data-list: add a source", list, `data-action="add-data"`);
+
+  // An empty or dangling dataSource name falls back to the list, never throws.
+  __t.setDataSource("");
+  has("data-list: empty name is the list", dataInspector(), `data-action="add-data"`);
+  __t.setDataSource("gone");
+  has("data-list: a name naming nothing falls back to the list", dataInspector(), `data-action="add-data"`);
+
+  // plex.top's source panel: every declared param reachable, each with a
+  // FULL-SENTENCE hint (not the old one-line "Library section ID"), plus the
+  // provider's own description/when, rename, provider select, test button,
+  // remove button.
+  __t.setDataSource("topMovies");
+  const top = dataSourcePanel("topMovies", __t.getState().data.topMovies);
+  for (const key of Object.keys(PROVIDERS["plex.top"].params)) {
+    has(`audit: plex.top param ${key}`, top, `data-path="data.topMovies.params.${key}"`);
+  }
+  has("audit: rename the source", top, `data-rename="data" data-old="topMovies"`);
+  has("audit: switch provider", top, `data-path="data.topMovies.provider"`);
+  has("audit: the provider's title", top, "Most watched");
+  has("audit: the provider's plain-English description", top,
+    "The most-viewed items in one library section over a recent window");
+  has("audit: the provider's 'when to use' guidance", top, "Use for a countdown");
+  check("audit: every plex.top hint is a full sentence (ends in a period)",
+    Object.values(PROVIDERS["plex.top"].params).every((p) => /\.$/.test(p.hint)),
+    JSON.stringify(PROVIDERS["plex.top"].params));
+  has("audit: a test button", top, `data-action="test-data" data-name="topMovies"`);
+  has("audit: a remove button", top, `data-action="remove-data" data-name="topMovies"`);
+  has("audit: back to the list", top, `data-action="select-data-list"`);
+  check("audit: plex.top has no extra-filter passthrough section (not `extra`)",
+    !top.includes("Extra Plex filters"), top);
+
+  // A SECOND source, a different provider — the whole point of "for every
+  // instance, not just the first": switching selection.dataSource actually
+  // shows THAT source's own params, and plex.section's passthrough extras.
+  __t.setDataSource("decade");
+  const dec = dataSourcePanel("decade", __t.getState().data.decade);
+  for (const key of Object.keys(PROVIDERS["plex.section"].params)) {
+    has(`audit: plex.section param ${key}`, dec, `data-path="data.decade.params.${key}"`);
+  }
+  has("audit: plex.section's escape-hatch description", dec, "escape hatch");
+  has("audit: the extra filter (decade) not covered by the provider's own params",
+    dec, `data-path="data.decade.params.decade"`);
+  has("audit: an extra filter is renameable", dec, `data-rename="data.decade.params" data-old="decade"`);
+  has("audit: add another extra filter", dec, `data-action="add-param" data-ds="decade"`);
+  not("audit: topMovies' fields are not bleeding into decade's panel", dec, `data.topMovies`);
+  __t.setDataSource(null);
 }
-console.log("inspector.js checks passed");
+
+// ---- data source actions ----------------------------------------------------
+{
+  __t.setState(DATA_FIXTURE());
+
+  actions["select-data"]({ name: "decade" });
+  eq("actions: select-data sets the selection", __t.dataSource(), "decade");
+
+  actions["select-data-list"]();
+  eq("actions: select-data-list returns to the list (empty string, not null)", __t.dataSource(), "");
+
+  actions["add-data"]();
+  const st = __t.getState();
+  const added = Object.keys(st.data).find((k) => !["topMovies", "decade"].includes(k));
+  check("actions: add-data creates a new source", added !== undefined, Object.keys(st.data));
+  eq("actions: add-data selects the new source", __t.dataSource(), added);
+  eq("actions: it defaults to plex.top", st.data[added].provider, "plex.top");
+
+  actions["remove-data"]({ name: "decade" });
+  eq("actions: remove-data deletes the source", __t.getState().data.decade, undefined);
+  eq("actions: remove-data returns to the list", __t.dataSource(), "");
+
+  actions["add-param"]({ ds: "topMovies" });
+  const keys1 = Object.keys(__t.getState().data.topMovies.params);
+  check("actions: add-param adds an extra filter key", keys1.includes("filter"), keys1);
+  actions["remove-param"]({ ds: "topMovies", key: "filter" });
+  check("actions: remove-param takes it away",
+    !Object.keys(__t.getState().data.topMovies.params).includes("filter"),
+    Object.keys(__t.getState().data.topMovies.params));
+
+  // Switching provider resets params to the new provider's defaults — a
+  // section id left over from plex.top would otherwise leak into a provider
+  // that names its params differently.
+  const ds = __t.getState().data.topMovies;
+  ds.provider = "plex.collections";
+  rerenderHooks["provider"]({ ds: "topMovies" });
+  same("actions: switching provider resets params to its defaults",
+    __t.getState().data.topMovies.params, { section: "{{ .MovieSectionId }}" });
+  __t.setDataSource(null);
+}
+
+// ---- "Test this source" results table --------------------------------------
+// renderTestResult is pure over the testResults[name] cache, so every one of
+// its states is checked directly rather than through a live fetch (the async
+// end-to-end path, including the Plex-absent and per-source-error cases, is
+// exercised below).
+{
+  for (const k of Object.keys(__t.testResults)) delete __t.testResults[k];
+  eq("test-result: nothing tested yet renders nothing", renderTestResult("x"), "");
+
+  __t.testResults.x = { pending: true };
+  has("test-result: pending shows a running state", renderTestResult("x"), "Running");
+
+  __t.testResults.x = { error: "plex.top: section is required" };
+  has("test-result: an error is shown, not a table", renderTestResult("x"), "plex.top: section is required");
+  not("test-result: an error state has no table", renderTestResult("x"), "<table");
+
+  __t.testResults.x = { items: [] };
+  has("test-result: a real empty result says so, distinct from 'not tested yet'",
+    renderTestResult("x"), "returned no items");
+
+  __t.testResults.x = { items: [
+    { rank: 1, name: "The Grand Budapest Hotel", views: 42, hasMedia: true },
+    { rank: 2, name: "Arrival", views: 31, hasMedia: false },
+  ] };
+  const table = renderTestResult("x");
+  has("test-result: item names shown", table, "The Grand Budapest Hotel");
+  has("test-result: view counts shown", table, "42");
+  has("test-result: a resolved trailer is marked", table, "yes");
+  has("test-result: a missing trailer is marked distinctly", table, "—");
+  has("test-result: the count is summarised", table, "2 items returned");
+  for (const k of Object.keys(__t.testResults)) delete __t.testResults[k];
+}
+
+// ---- Task 15: audio settings and "Edit data sources" survive the Audio/Data
+// cards' retirement, reachable with EITHER zero scenes (the preroll panel)
+// or a scene selected (its "Pre-roll settings" details) — the same
+// reachability failure mode the Layouts-card audit above already guards
+// against (a control that exists for scene 0 but nowhere else).
+{
+  __t.setState({ ...FIXTURE(), audio: { file: "", mode: "soundtrack", start: 0, fadeOut: null } });
+  __t.setDataSource(null);
+
+  __t.setState({ scenes: [], layouts: {}, data: {}, audio: { file: "a.mp3", mode: "soundtrack", start: 0, fadeOut: null } });
+  __t.select(99, null); // no scene at all -> the preroll panel
+  renderInspector();
+  const empty = panel();
+  has("audio: reachable with zero scenes (preroll panel)", empty, `data-path="audio.file"`);
+  has("audio: the fade toggle is reachable with zero scenes", empty, `data-action-toggle="audio-fade"`);
+  has("data: 'Edit data sources' is reachable with zero scenes", empty, `data-action="select-data-list"`);
+
+  __t.setState(FIXTURE());
+  __t.select(0, null); // a normal scene -> the scene panel
+  renderInspector();
+  const withScene = panel();
+  has("audio: also reachable from a scene's Pre-roll settings", withScene, `data-path="audio.file"`);
+  has("data: also reachable from a scene's Pre-roll settings", withScene, `data-action="select-data-list"`);
+
+  // The fade sub-fields only appear once fadeOut is set — audited here since
+  // audioFields() moved from a directly-wired #fade-toggle listener
+  // (sections.js) to the same data-action-toggle delegation scene-bg uses.
+  const st = __t.getState();
+  st.audio.fadeOut = { start: 1, duration: 2 };
+  renderInspector();
+  has("audio: fade sub-fields appear once fadeOut is set", panel(), `data-path="audio.fadeOut.start"`);
+}
+
+// ---- Task 15: clicking a data-source row leaves the LIST panel showing that
+// source, and the panel dispatch correctly prefers data mode over the
+// scene/element dispatch whenever dataSource is non-null.
+{
+  __t.setState(DATA_FIXTURE());
+  __t.select(0, null);
+  __t.setDataSource("topMovies");
+  renderInspector();
+  has("dispatch: data mode wins over the scene panel", panel(), `data-action="test-data"`);
+  not("dispatch: the scene panel is not shown while in data mode", panel(), `data-path="scenes.0.kind"`);
+  __t.setDataSource(null);
+}
+
+(async () => {
+  // ---- "Test this source" end to end ---------------------------------------
+  // The async action itself: apiResolveData's reply flows into testResults
+  // through the same {configured, sources} shape data.go actually answers
+  // with (data_test.go), across the three states the brief calls out.
+  __t.setState(DATA_FIXTURE());
+
+  // Plex absent: data.go answers 200 with configured:false and a reason —
+  // never a hang, never a silent failure.
+  resolveResponse = { configured: false, reason: "Plex is not configured (set PLEX_URL and PLEX_TOKEN); showing placeholder data" };
+  await actions["test-data"]({ name: "topMovies" });
+  eq("test-data: Plex absent surfaces the reason as the error", __t.testResults.topMovies.error,
+    "Plex is not configured (set PLEX_URL and PLEX_TOKEN); showing placeholder data");
+  eq("test-data: Plex absent has no items", __t.testResults.topMovies.items.length, 0);
+
+  // Plex present, this one source erroring (a bad param): configured:true but
+  // this source's own .error is set, per-source, exactly like data.go's
+  // resolveOne on a provider error.
+  resolveResponse = { configured: true, sources: { topMovies: { items: [], error: "plex.top: section is required" } } };
+  await actions["test-data"]({ name: "topMovies" });
+  eq("test-data: a per-source error surfaces", __t.testResults.topMovies.error, "plex.top: section is required");
+
+  // Plex present and healthy: real items flow straight into the table.
+  resolveResponse = { configured: true, sources: { topMovies: { items: [
+    { rank: 1, name: "Heat", views: 12, hasMedia: true },
+  ] } } };
+  await actions["test-data"]({ name: "topMovies" });
+  eq("test-data: a healthy reply has no error", __t.testResults.topMovies.error, "");
+  eq("test-data: a healthy reply's items are kept", __t.testResults.topMovies.items[0].name, "Heat");
+  has("test-data: renders into the panel's own table", renderTestResult("topMovies"), "Heat");
+
+  // A source the resolve reply says nothing about (the request failed to
+  // resolve for that name at all) must not throw — falls back to no items.
+  resolveResponse = { configured: true, sources: {} };
+  await actions["test-data"]({ name: "topMovies" });
+  eq("test-data: a missing source in the reply degrades to empty, not a throw",
+    __t.testResults.topMovies.items.length, 0);
+
+  if (failures) {
+    console.error(`\n${failures} check(s) failed`);
+    process.exit(1);
+  }
+  console.log("inspector.js checks passed");
+})();

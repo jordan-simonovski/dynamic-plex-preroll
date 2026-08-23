@@ -166,9 +166,6 @@ input[type="checkbox"] { width: auto; }
 }
 .drawer #yaml { max-height: 60vh; }
 
-/* The phase-1 cards live below the studio while they are being retired. */
-.editor { padding: 0 20px 24px; max-width: 1500px; margin: 0 auto; }
-
 /* ---- phase 2: the contextual inspector ---------------------------------- */
 .inspector h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--accent); }
 .inspector h3 { margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
@@ -265,3 +262,13 @@ dialog.picker::backdrop { background: rgba(0, 0, 0, .6); }
 .template-row code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
 .template-explain { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
 .template-example { display: block; font-family: var(--mono); font-size: 11px; margin-top: 4px; }
+
+/* ---- data source docs and test table (Task 15) ---------------------------- */
+.provider-doc {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; margin: 10px 0; font-size: 12px;
+}
+.provider-doc p { margin: 0 0 4px; }
+.test-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.test-table th, .test-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.test-table th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }

@@ -32,14 +32,21 @@ function inspectorTarget() {
 }
 
 const inspectorPanels = {
-  preroll: () => `<h2>Pre-roll</h2>${prerollFields()}
+  // audioFields() and the "Edit data sources" button are duplicated here from
+  // sceneInspector's "Pre-roll settings" details, below: with zero scenes
+  // there is no scene panel to hold that details block at all, and the
+  // retired Audio and Data cards were reachable with zero scenes too — this
+  // is what keeps that true now that both only otherwise live inside a
+  // scene's details.
+  preroll: () => `<h2>Pre-roll</h2>${prerollFields()}${audioFields()}
+    <h3>Data</h3>
+    <button class="btn ghost" data-action="select-data-list">Edit data sources</button>
     <p class="empty">No scenes yet — add one with the + buttons in the timeline rail.</p>`,
   element: (t) => elementInspector(t.path, t.el),
   scene: (t) => sceneInspector(t.scene, t.index),
 };
 
 function renderInspector() {
-  const target = inspectorTarget();
   const panel = $("#inspector");
   // Task 11's real focus model, replacing the Task 8 review's one-line
   // stopgap (which refocused into the panel unconditionally, every call).
@@ -52,7 +59,16 @@ function renderInspector() {
   // a keyboard-selected element's inspector panel repainted, breaking the
   // very nudge keys that selection was for.
   const hadFocus = document.activeElement && panel.contains(document.activeElement);
-  panel.innerHTML = inspectorPanels[target.kind](target);
+  // A non-null selection.dataSource means the inspector is describing a data
+  // source rather than the stage's selection: checked first, ahead of the
+  // scene/element/preroll dispatch below. "" is the data list; null is "not
+  // in data mode at all".
+  if (selection.dataSource !== null) {
+    panel.innerHTML = dataInspector();
+  } else {
+    const target = inspectorTarget();
+    panel.innerHTML = inspectorPanels[target.kind](target);
+  }
   if (hadFocus) panel.querySelector("input, select, textarea, button")?.focus?.();
 }
 
@@ -76,6 +92,25 @@ function prerollFields() {
     ${field("FPS", numInput("fps", state.fps, { int: true, min: 1 }))}
     ${field("Length (s)", numInput("length", state.length, { min: 0 }), "0 lets the scenes decide the total length")}
   </div>`;
+}
+
+// audioFields is the retired Audio card, moved here: the soundtrack belongs
+// to the pre-roll, so it lives with the pre-roll's other settings (a scene's
+// "Pre-roll settings" details, and the no-scenes preroll panel above).
+function audioFields() {
+  const a = state.audio;
+  return `<h3>Soundtrack</h3>
+    <div class="stack">
+      ${fileField("Audio file", "audio.file", a.file, "audio", "Leave empty for no soundtrack")}
+      ${field("Mode", select("audio.mode", a.mode, ["soundtrack", "original", "mix"]),
+        "soundtrack: music only · original: clip audio · mix: both")}
+      ${field("Start offset (s)", numInput("audio.start", a.start, { min: 0 }),
+        "Seek into the track — drop in on the hook, not the intro")}
+      <label class="check"><input type="checkbox" data-action-toggle="audio-fade"${a.fadeOut ? " checked" : ""}> Fade out at the end</label>
+      ${a.fadeOut ? `
+        ${field("Fade starts at (s)", numInput("audio.fadeOut.start", a.fadeOut.start, { min: 0 }))}
+        ${field("Fade duration (s)", numInput("audio.fadeOut.duration", a.fadeOut.duration, { min: 0 }))}` : ""}
+    </div>`;
 }
 
 // ---- element ---------------------------------------------------------------
@@ -123,7 +158,10 @@ function sceneInspector(sc, i) {
       ${sceneKindFields(sc, i, base)}
     </div>
     ${layoutSection(sc)}
-    <details><summary>Pre-roll settings</summary>${prerollFields()}</details>`;
+    <details><summary>Pre-roll settings</summary>${prerollFields()}${audioFields()}
+      <h3>Data</h3>
+      <button class="btn ghost" data-action="select-data-list">Edit data sources</button>
+    </details>`;
 }
 
 function sceneKindFields(sc, i, base) {
@@ -254,3 +292,172 @@ actions["remove-layout"] = (d) => {
 // Changing a render scene's layout (or a clips scene's label layout)
 // invalidates the element selection, which indexes into the OLD layout's array.
 rerenderHooks["scene-layout"] = () => { selection.element = null; };
+
+// Vars feed extra template variables into the scene's layout, so one layout
+// serves many scenes with different text. Moved here from the retired
+// sections.js: the var rows render wherever the scene they belong to is
+// shown, which is now only the inspector.
+function varRows(sc, i, base) {
+  const vars = sc.vars || {};
+  const rows = Object.entries(vars).map(([k, v]) => `<div class="kv">
+    <input type="text" data-rename="${esc(base)}.vars" data-old="${esc(k)}" value="${esc(k)}">
+    <input type="text" data-path="${esc(base)}.vars.${esc(k)}" value="${esc(v)}">
+    <button class="btn ghost danger" data-action="remove-var" data-index="${i}" data-key="${esc(k)}">×</button>
+  </div>`).join("");
+  return `<h3>Template variables</h3>${rows}
+    <button class="btn ghost" data-action="add-var" data-index="${i}">+ Add variable</button>`;
+}
+actions["add-var"] = (d) => {
+  const sc = state.scenes[+d.index];
+  sc.vars = sc.vars || {};
+  sc.vars[uniqueKey(sc.vars, "Var")] = "";
+  renderAll();
+};
+actions["remove-var"] = (d) => { delete state.scenes[+d.index].vars[d.key]; renderAll(); };
+
+// Changing kind swaps the scene for that kind's defaults — stale fields from
+// the old kind (file on a render scene, layout on clips) must not linger. That
+// throws away vars, background, label and layout, so ask first when the scene
+// holds anything beyond a fresh one's defaults; on "no", put the kind back
+// (the input handler wrote it before this hook ran) and let the re-render
+// restore the select.
+rerenderHooks["scene-kind"] = (dataset) => {
+  const i = +dataset.index;
+  const sc = state.scenes[i];
+  const fresh = JSON.stringify({ ...sceneDefaults(dataset.prev), kind: sc.kind });
+  if (JSON.stringify(sc) !== fresh &&
+      !confirm(`Switch scene #${i + 1} from ${dataset.prev} to ${sc.kind}? Its current settings are cleared.`)) {
+    sc.kind = dataset.prev;
+    return;
+  }
+  state.scenes[i] = sceneDefaults(sc.kind);
+};
+
+// ---- data sources ------------------------------------------------------------
+// Data sources are not part of any one scene, so they get their own inspector
+// mode rather than a card: selection.dataSource names the one being edited,
+// and "" means the list. null (checked by renderInspector() above) means
+// "not in data mode at all".
+function dataInspector() {
+  const name = selection.dataSource;
+  if (!name || !state.data[name]) return dataListPanel();
+  return dataSourcePanel(name, state.data[name]);
+}
+
+function dataListPanel() {
+  const rows = Object.entries(state.data).map(([name, ds]) => {
+    const meta = PROVIDERS[ds.provider] || {};
+    return `<button class="element-row" data-action="select-data" data-name="${esc(name)}">
+      <span class="kind">${esc(meta.title || ds.provider || "?")}</span>
+      <span class="label">${esc(name)}</span>
+    </button>`;
+  }).join("");
+  return `<h2>Data sources</h2>
+    <p class="muted">Named feeds of Plex items. List elements, clip scenes and dynamic backgrounds all pull from these by name.</p>
+    <div class="element-list">${rows || `<p class="empty">No data sources yet.</p>`}</div>
+    <button class="btn" data-action="add-data">+ Add data source</button>`;
+}
+
+function dataSourcePanel(name, ds) {
+  const meta = PROVIDERS[ds.provider] || { params: {} };
+  const rows = Object.entries(meta.params || {}).map(([key, p]) => {
+    const path = `data.${name}.params.${key}`;
+    const val = ds.params?.[key] ?? "";
+    const input = p.options
+      ? select(path, val, p.options)
+      : textInput(path, val, { placeholder: p.default || "" }) + templateButton(path, "text");
+    return field(key, input, p.hint);
+  }).join("");
+  const result = renderTestResult(name);
+  return `<h2>Data source</h2>
+    <button class="btn ghost" data-action="select-data-list">← All sources</button>
+    <div class="stack">
+      <label class="field"><span>Name</span>
+        <input type="text" data-rename="data" data-old="${esc(name)}" value="${esc(name)}"></label>
+      ${field("Provider", select(`data.${name}.provider`, ds.provider, Object.keys(PROVIDERS),
+        { rerender: "provider", attrs: `data-ds="${esc(name)}"` }))}
+    </div>
+    <div class="provider-doc">
+      <p><strong>${esc(meta.title || ds.provider)}</strong> — ${esc(meta.describe || "")}</p>
+      <p class="muted">${esc(meta.when || "")}</p>
+    </div>
+    <h3>Parameters</h3>
+    <div class="stack">${rows}</div>
+    ${meta.extra ? extraParamRows(name, ds, meta) : ""}
+    <h3>Test</h3>
+    <p class="muted">Runs this source against your real Plex server and shows what it returns.</p>
+    <button class="btn" data-action="test-data" data-name="${esc(name)}">Test this source</button>
+    <div id="test-result">${result}</div>
+    <button class="btn ghost danger" data-action="remove-data" data-name="${esc(name)}">Remove source</button>`;
+}
+
+// plex.section passes unknown params through to Plex as filters; these rows
+// edit the params not covered by the provider's declared knobs.
+function extraParamRows(name, ds, meta) {
+  const extras = Object.entries(ds.params || {}).filter(([k]) => !(k in meta.params));
+  const rows = extras.map(([k, v]) => `<div class="kv">
+    <input type="text" data-rename="data.${esc(name)}.params" data-old="${esc(k)}" value="${esc(k)}">
+    <input type="text" data-path="data.${esc(name)}.params.${esc(k)}" value="${esc(v)}">
+    <button class="btn ghost danger" data-action="remove-param" data-ds="${esc(name)}" data-key="${esc(k)}">×</button>
+  </div>`).join("");
+  return `<h3>Extra Plex filters</h3>
+    <p class="muted">Anything here is handed to Plex verbatim as a query filter, e.g. decade=1990 or year&gt;&gt;=2000.</p>
+    ${rows}
+    <button class="btn ghost" data-action="add-param" data-ds="${esc(name)}">+ Add filter</button>`;
+}
+
+// testResults holds the last "Test this source" answer per source name, so the
+// table survives a re-render of the panel.
+const testResults = {};
+
+function renderTestResult(name) {
+  const r = testResults[name];
+  if (!r) return "";
+  if (r.pending) return `<p class="muted">Running…</p>`;
+  if (r.error) return `<ul class="errors"><li>${esc(r.error)}</li></ul>`;
+  if (!r.items.length) return `<p class="empty">The source ran and returned no items. Check the section id and any filters.</p>`;
+  return `<table class="test-table">
+    <thead><tr><th>#</th><th>Name</th><th>Views</th><th>Trailer</th></tr></thead>
+    <tbody>${r.items.map((it) => `<tr>
+      <td>${it.rank}</td><td>${esc(it.name)}</td><td>${it.views || ""}</td>
+      <td>${it.hasMedia ? "yes" : "—"}</td></tr>`).join("")}</tbody>
+  </table>
+  <p class="muted">${r.items.length} item${r.items.length === 1 ? "" : "s"} returned.</p>`;
+}
+
+actions["select-data"] = (d) => { selection.dataSource = d.name; renderInspector(); };
+actions["select-data-list"] = () => { selection.dataSource = ""; renderInspector(); };
+actions["add-data"] = () => {
+  const name = uniqueKey(state.data, "source");
+  state.data[name] = { provider: "plex.top", params: defaultParams("plex.top") };
+  selection.dataSource = name;
+  onStateChange();
+};
+actions["remove-data"] = (d) => {
+  delete state.data[d.name];
+  selection.dataSource = "";
+  onStateChange();
+};
+actions["add-param"] = (d) => {
+  const ds = state.data[d.ds];
+  ds.params[uniqueKey(ds.params, "filter")] = "";
+  renderInspector();
+};
+actions["remove-param"] = (d) => { delete state.data[d.ds].params[d.key]; renderInspector(); };
+actions["test-data"] = async (d) => {
+  testResults[d.name] = { pending: true };
+  renderInspector();
+  const out = await apiResolveData({ [d.name]: state.data[d.name] });
+  const src = (out.sources || {})[d.name] || { items: [] };
+  testResults[d.name] = out.configured
+    ? { items: src.items || [], error: src.error || "" }
+    : { items: [], error: out.reason || "Plex is not configured." };
+  renderInspector();
+};
+
+// Switching provider resets params to that provider's defaults — stale keys
+// would otherwise leak through plex.section's passthrough as bogus filters.
+rerenderHooks["provider"] = (dataset) => {
+  const ds = state.data[dataset.ds];
+  ds.params = defaultParams(ds.provider);
+};

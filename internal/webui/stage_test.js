@@ -152,6 +152,8 @@ globalThis.__t = {
   stageDataReason: () => stageDataReason,
   selectElement: (i) => { selection.element = i; },
   selectedElement: () => selection.element,
+  setDataSource: (n) => { selection.dataSource = n; },
+  dataSource: () => selection.dataSource,
   placeholderName: () => PLACEHOLDER_ITEMS[0].name,
   setDrag: (v) => { stageDrag = v; },
 };`, ctx);
@@ -806,8 +808,13 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
 
   const kd = (k, extra) => { let prevented = false; stageKeyNav({ key: k, shiftKey: false, altKey: false, preventDefault: () => { prevented = true; }, ...extra }); return prevented; };
 
+  // Task 15: a claimed key means the user is interacting with the stage, not
+  // the data panel — same rule as a click (interact_test.js's own version of
+  // this check, on stagePointerDown).
+  __t.setDataSource("top");
   eq("nav: Tab selects the first element and re-renders the inspector", kd("Tab") && __t.selectedElement(), 0);
   eq("nav: one inspector render per key", __spy.inspector, 1);
+  eq("nav: a claimed key (Tab) leaves data mode", __t.dataSource(), null);
 
   eq("nav: ArrowRight nudges x by 1", kd("ArrowRight"), true);
   eq("nav: the element actually moved", currentLayout().elements[0].x, 101);
@@ -817,7 +824,11 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
   eq("nav: Shift+Arrow nudges by 10", currentLayout().elements[0].y, 210);
 
   eq("nav: Escape deselects", kd("Escape") && __t.selectedElement(), null);
+
+  __t.setDataSource("top");
   eq("nav: an unclaimed key does not call preventDefault", kd("q"), false);
+  eq("nav: ...and does not leave data mode either (nothing was claimed)", __t.dataSource(), "top");
+  __t.setDataSource(null);
 
   __t.selectElement(1);
   kd("Delete");
