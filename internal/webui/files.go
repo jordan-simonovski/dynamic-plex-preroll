@@ -77,21 +77,27 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// workDirAbs returns the absolute working directory manifest-relative paths
+// are resolved against: WorkDir, or the process's own directory when unset.
+func (s *Server) workDirAbs() (string, error) {
+	base := s.WorkDir
+	if base == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		base = cwd
+	}
+	return filepath.Abs(base)
+}
+
 // manifestRelative renders an absolute path the way a manifest should spell
 // it: relative to the directory renders run in, so "media/common/Font.ttf"
 // resolves identically for the UI's preview and for the batch renderer.
 // A path outside WorkDir is left absolute — still correct in a manifest, just
 // less portable.
 func (s *Server) manifestRelative(abs string) string {
-	base := s.WorkDir
-	if base == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return abs
-		}
-		base = cwd
-	}
-	baseAbs, err := filepath.Abs(base)
+	baseAbs, err := s.workDirAbs()
 	if err != nil {
 		return abs
 	}
@@ -134,13 +140,9 @@ func (s *Server) filesRaw(w http.ResponseWriter, r *http.Request) {
 func (s *Server) resolveMediaPath(requested string) (string, error) {
 	candidate := requested
 	if !filepath.IsAbs(candidate) {
-		base := s.WorkDir
-		if base == "" {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return "", err
-			}
-			base = cwd
+		base, err := s.workDirAbs()
+		if err != nil {
+			return "", err
 		}
 		candidate = filepath.Join(base, candidate)
 	}

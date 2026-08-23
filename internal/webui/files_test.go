@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -89,8 +91,11 @@ func TestFilesRawServesAFileUnderTheRoot(t *testing.T) {
 
 func TestFilesRawRejectsTraversal(t *testing.T) {
 	ts, root := mediaServer(t)
+	// The sentinel's content, not just the status code, is the real assertion:
+	// a working traversal could return non-200 for other reasons while still
+	// having read the file (e.g. a handler that reads then 500s).
 	secret := filepath.Join(filepath.Dir(root), "secret.txt")
-	if err := os.WriteFile(secret, []byte("nope"), 0o644); err != nil {
+	if err := os.WriteFile(secret, []byte("nope-secret-sentinel"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, attempt := range []string{
@@ -103,6 +108,45 @@ func TestFilesRawRejectsTraversal(t *testing.T) {
 		if res.StatusCode == 200 {
 			t.Errorf("traversal %q was served", attempt)
 		}
+		body, _ := io.ReadAll(res.Body)
+		if strings.Contains(string(body), "nope-secret-sentinel") {
+			t.Errorf("traversal %q leaked the sentinel file's content", attempt)
+		}
+	}
+}
+
+// TestFilesRawRejectsSiblingWithSharedPrefix pins the prefix-collision case by
+// name: a configured root "/media" must not permit "/mediaevil", even though
+// "mediaevil" has "media" as a string prefix. resolveMediaPath uses
+// filepath.Rel (which respects path segment boundaries) rather than
+// strings.HasPrefix; this test fails loudly if a future refactor swaps that
+// for a naive prefix check.
+func TestFilesRawRejectsSiblingWithSharedPrefix(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "media")
+	sibling := filepath.Join(parent, "mediaevil")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(sibling, "secret.png")
+	if err := os.WriteFile(secretPath, []byte("sibling-secret-sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{ManifestDir: t.TempDir(), MediaDirs: []string{root}, WorkDir: parent}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	res := do(t, "GET", ts.URL+"/api/files/raw?path="+url.QueryEscape("mediaevil/secret.png"), "")
+	if res.StatusCode == 200 {
+		t.Fatal("a sibling directory sharing a name prefix with the root must not be served")
+	}
+	body, _ := io.ReadAll(res.Body)
+	if strings.Contains(string(body), "sibling-secret-sentinel") {
+		t.Fatal("leaked the sibling directory's content")
 	}
 }
 
