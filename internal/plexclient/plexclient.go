@@ -21,7 +21,7 @@ var defaultHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // GetMostViewedContent returns the most-viewed shows and movies within the
 // configured period. Retained as a convenience wrapper over TopItems.
-func (client *PlexClient) GetMostViewedContent() (shows, movies content.Items, err error) {
+func (client *PlexClient) GetMostViewedContent(ctx context.Context) (shows, movies content.Items, err error) {
 	since := time.Now().AddDate(0, 0, -client.PeriodInterval).Unix()
 	base := func(sectionType string) url.Values {
 		return url.Values{
@@ -31,11 +31,11 @@ func (client *PlexClient) GetMostViewedContent() (shows, movies content.Items, e
 		}
 	}
 
-	shows, err = client.TopItems(base(client.TVShowSectionId))
+	shows, err = client.TopItems(ctx, base(client.TVShowSectionId))
 	if err != nil {
 		return nil, nil, err
 	}
-	movies, err = client.TopItems(base(client.MovieSectionId))
+	movies, err = client.TopItems(ctx, base(client.MovieSectionId))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,26 +43,26 @@ func (client *PlexClient) GetMostViewedContent() (shows, movies content.Items, e
 }
 
 // TopItems queries /library/all/top with the supplied filters.
-func (client *PlexClient) TopItems(params url.Values) (content.Items, error) {
-	return client.listItems(topItemsPath, params)
+func (client *PlexClient) TopItems(ctx context.Context, params url.Values) (content.Items, error) {
+	return client.listItems(ctx, topItemsPath, params)
 }
 
 // SectionItems queries /library/sections/{id}/all with the supplied filters
 // (e.g. type, unwatched, sort, limit).
-func (client *PlexClient) SectionItems(sectionID string, params url.Values) (content.Items, error) {
+func (client *PlexClient) SectionItems(ctx context.Context, sectionID string, params url.Values) (content.Items, error) {
 	if strings.TrimSpace(sectionID) == "" {
 		return nil, fmt.Errorf("plex: section id is required")
 	}
-	return client.listItems("/library/sections/"+sectionID+"/all", params)
+	return client.listItems(ctx, "/library/sections/"+sectionID+"/all", params)
 }
 
 // CollectionItems lists the collections in a section. The collection's child
 // count is surfaced as Views so a manifest can render "(N titles)".
-func (client *PlexClient) CollectionItems(sectionID string, params url.Values) (content.Items, error) {
+func (client *PlexClient) CollectionItems(ctx context.Context, sectionID string, params url.Values) (content.Items, error) {
 	if strings.TrimSpace(sectionID) == "" {
 		return nil, fmt.Errorf("plex: section id is required")
 	}
-	decoded, err := client.fetch("/library/sections/"+sectionID+"/collections", params)
+	decoded, err := client.fetch(ctx, "/library/sections/"+sectionID+"/collections", params)
 	if err != nil {
 		return nil, err
 	}
@@ -82,11 +82,11 @@ func (client *PlexClient) CollectionItems(sectionID string, params url.Values) (
 // Extras returns the extras (trailers, behind-the-scenes, etc.) attached to an
 // item. Each returned content.Item carries a RatingKey and a fully-qualified,
 // token-authenticated MediaURL suitable as an ffmpeg input.
-func (client *PlexClient) Extras(ratingKey string) (content.Items, error) {
+func (client *PlexClient) Extras(ctx context.Context, ratingKey string) (content.Items, error) {
 	if strings.TrimSpace(ratingKey) == "" {
 		return nil, fmt.Errorf("plex: rating key is required")
 	}
-	decoded, err := client.fetch("/library/metadata/"+ratingKey+"/extras", url.Values{})
+	decoded, err := client.fetch(ctx, "/library/metadata/"+ratingKey+"/extras", url.Values{})
 	if err != nil {
 		return nil, err
 	}
@@ -109,11 +109,11 @@ func (client *PlexClient) Extras(ratingKey string) (content.Items, error) {
 // FindByGUID looks an agent GUID (e.g. plex://movie/...) up in the local
 // library, returning the first match. Used to tie items from cloud sources
 // (watchlist, trending) back to local media for trailer resolution.
-func (client *PlexClient) FindByGUID(guid string) (content.Item, bool, error) {
+func (client *PlexClient) FindByGUID(ctx context.Context, guid string) (content.Item, bool, error) {
 	if strings.TrimSpace(guid) == "" {
 		return content.Item{}, false, fmt.Errorf("plex: guid is required")
 	}
-	items, err := client.listItems("/library/all", url.Values{"guid": {guid}})
+	items, err := client.listItems(ctx, "/library/all", url.Values{"guid": {guid}})
 	if err != nil {
 		return content.Item{}, false, err
 	}
@@ -124,8 +124,8 @@ func (client *PlexClient) FindByGUID(guid string) (content.Item, bool, error) {
 }
 
 // listItems issues a GET and maps the metadata into content.Items.
-func (client *PlexClient) listItems(path string, params url.Values) (content.Items, error) {
-	decoded, err := client.fetch(path, params)
+func (client *PlexClient) listItems(ctx context.Context, path string, params url.Values) (content.Items, error) {
+	decoded, err := client.fetch(ctx, path, params)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +156,9 @@ func (e *statusError) Error() string {
 }
 
 // fetch performs the request and decodes the lean listing shape.
-func (client *PlexClient) fetch(path string, params url.Values) (*itemsResponse, error) {
+func (client *PlexClient) fetch(ctx context.Context, path string, params url.Values) (*itemsResponse, error) {
 	var decoded itemsResponse
-	if err := client.getJSON(path, params, &decoded); err != nil {
+	if err := client.getJSON(ctx, path, params, &decoded); err != nil {
 		return nil, err
 	}
 	if client.Debug {
@@ -168,8 +168,8 @@ func (client *PlexClient) fetch(path string, params url.Values) (*itemsResponse,
 }
 
 // getJSON performs an authenticated GET and decodes the body into dst.
-func (client *PlexClient) getJSON(path string, params url.Values, dst any) error {
-	resp, err := client.GetURL(path, params)
+func (client *PlexClient) getJSON(ctx context.Context, path string, params url.Values, dst any) error {
+	resp, err := client.GetURL(ctx, path, params)
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func (client *PlexClient) Diagnose() {
 		{topItemsPath, url.Values{"type": {"2"}, "librarySectionID": {client.TVShowSectionId}, "limit": {fmt.Sprint(client.MaxItems)}, "viewedAt>>": {since}}},
 	}
 	for _, p := range probes {
-		resp, err := client.GetURL(p.path, p.params)
+		resp, err := client.GetURL(context.Background(), p.path, p.params)
 		if err != nil {
 			log.Printf("plex: probe %s %v -> ERROR: %v", p.path, p.params, err)
 			continue
@@ -241,7 +241,7 @@ func (client *PlexClient) Download(ctx context.Context, rawURL, dest string) err
 
 // GetLibrarySectionIds prints the available library sections. Diagnostic helper.
 func (client *PlexClient) GetLibrarySectionIds() error {
-	resp, err := client.GetURL("/library/sections", url.Values{})
+	resp, err := client.GetURL(context.Background(), "/library/sections", url.Values{})
 	if err != nil {
 		return err
 	}
@@ -264,7 +264,7 @@ func (client *PlexClient) GetLibrarySectionIds() error {
 // GetURL issues an authenticated GET against the Plex server. The supplied
 // params are not mutated; the auth token is added to a local copy. The token is
 // always redacted from logs and returned errors.
-func (client *PlexClient) GetURL(urlPath string, params url.Values) (*http.Response, error) {
+func (client *PlexClient) GetURL(ctx context.Context, urlPath string, params url.Values) (*http.Response, error) {
 	query := make(url.Values, len(params)+1)
 	for key, values := range params {
 		query[key] = values
@@ -274,7 +274,7 @@ func (client *PlexClient) GetURL(urlPath string, params url.Values) (*http.Respo
 	fullURL := client.PlexURL + urlPath + "?" + query.Encode()
 	safeURL := client.redact(fullURL)
 
-	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
 		return nil, err
 	}
