@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +34,62 @@ const renderLogLimit = 64 << 10
 // dot-directory under the output tree, never the manifest directory the batch
 // renderer globs.
 const defaultRenderDir = "pre-roll-output/.ui-renders"
+
+// renderEnvDenied lists the variables cmd/plex-pre-rolls reads that a preview
+// render must NOT inherit.
+//
+// THE RULE, for whoever adds the next variable to internal/configmanager: a
+// preview may inherit a variable only if its whole effect is reading data and
+// writing inside the render scratch directory. Anything that changes WHAT gets
+// rendered, or that has an effect outside the scratch dir — the Plex server's
+// own configuration, the real output tree, the manifest directory — belongs in
+// this list.
+//
+// Every variable cmd/plex-pre-rolls reads, and why:
+//
+//	PLEX_URL, PLEX_TOKEN     inherit — the preview resolves against the same server the manifest is written for
+//	MOVIE_SECTION_ID         inherit — ditto, source data only
+//	TV_SHOW_SECTION_ID       inherit — ditto
+//	MAX_ITEMS                inherit — ditto
+//	PERIOD_INTERVAL          inherit — ditto
+//	PLEX_INSECURE            inherit — connection-level only; without it a preview cannot reach some servers at all
+//	DEBUG                    inherit — logging only, and the log is what the preview shows the user
+//	PLEX_SET_PREROLL         DENY    — appends the render's path to the LIVE server's pre-roll preference; a preview mp4 is
+//	                                   scratch, deleted at the next render, so every preview would leave a dead entry behind
+//	PLEX_PREROLL_SERVER_DIR  DENY    — only feeds that write, and with SET_PREROLL on but this unset the renderer exits
+//	                                   before rendering anything
+//	PLEX_PREROLL_MODE        DENY    — only feeds that write
+//	MANIFEST_DIR             DENY    — batch mode: renders the whole real manifest directory and ignores the -manifest we pass
+//	MANIFEST_PATH            DENY    — the explicit -manifest flag beats it today; the preview must not rest on flag precedence
+//
+// Denied variables are REMOVED from the environment, never set to "": envconfig
+// treats a set-but-empty value as an explicit value and skips the default, so
+// PLEX_SET_PREROLL="" fails to parse as a bool and the renderer dies before it
+// renders anything.
+var renderEnvDenied = []string{
+	"PLEX_SET_PREROLL",
+	"PLEX_PREROLL_SERVER_DIR",
+	"PLEX_PREROLL_MODE",
+	"MANIFEST_DIR",
+	"MANIFEST_PATH",
+}
+
+// renderEnv strips the denied variables from env.
+// ponytail: deny-list, not allow-list. The renderer also needs whatever
+// ImageMagick and ffmpeg need — PATH, HOME, TMPDIR, MAGICK_*, LD_LIBRARY_PATH,
+// locale — and that set is not ours to enumerate. The list above is the part we
+// own, and it is short enough to audit at a glance.
+func renderEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(renderEnvDenied, key) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
 
 // jobIDRE is the shape of a server-generated job id. Ids are only ever
 // generated here, so validating the shape on the way back in is a cheap way to
@@ -150,12 +208,7 @@ func (s *Server) runRender(ctx context.Context, job *renderJob, manifestPath str
 
 	cmd := exec.CommandContext(ctx, s.RenderBin, "-manifest", manifestPath)
 	cmd.Dir = s.WorkDir
-	// The environment is inherited whole: the renderer needs the same PLEX_*
-	// configuration this process was started with, and reconstructing it here
-	// would be a second place for it to drift. MANIFEST_DIR is cleared because
-	// it would put the renderer in batch mode over the real manifest directory
-	// and ignore the one file we asked for.
-	cmd.Env = append(os.Environ(), "MANIFEST_DIR=")
+	cmd.Env = renderEnv(os.Environ())
 
 	var out bytes.Buffer
 	cmd.Stdout = &out

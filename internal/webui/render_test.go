@@ -2,6 +2,7 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -213,5 +214,62 @@ func TestRenderDoesNotInheritBatchMode(t *testing.T) {
 	out := waitForJob(t, ts, started.ID)
 	if log, _ := out["log"].(string); !strings.Contains(log, "MANIFEST_DIR=[]") {
 		t.Fatalf("renderer must not inherit MANIFEST_DIR, got %q", log)
+	}
+}
+
+// The UI process runs with the user's whole .env loaded, and the renderer
+// inherits that environment. Anything with an effect outside the scratch
+// directory must not survive the trip — above all PLEX_SET_PREROLL, which would
+// append every throwaway preview to the live Plex server's pre-roll preference.
+// The data variables the manifest resolves against must survive.
+func TestRenderNeutralisesSideEffectingEnv(t *testing.T) {
+	denied := []string{"PLEX_SET_PREROLL", "PLEX_PREROLL_SERVER_DIR", "PLEX_PREROLL_MODE", "MANIFEST_DIR", "MANIFEST_PATH"}
+	inherited := map[string]string{
+		"PLEX_URL":           "http://plex.local:32400",
+		"PLEX_TOKEN":         "tok",
+		"MAX_ITEMS":          "5",
+		"PERIOD_INTERVAL":    "WEEK",
+		"MOVIE_SECTION_ID":   "1",
+		"TV_SHOW_SECTION_ID": "2",
+		"DEBUG":              "true",
+		"PLEX_INSECURE":      "true",
+	}
+	for _, k := range denied {
+		t.Setenv(k, "set-in-the-ui-process")
+	}
+	for k, v := range inherited {
+		t.Setenv(k, v)
+	}
+
+	// The stub reports the child's ACTUAL environment: ${VAR-UNSET} tells a
+	// removed variable apart from one set to the empty string, and only removal
+	// is correct — envconfig fails to parse PLEX_SET_PREROLL="" as a bool.
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\n")
+	for _, k := range denied {
+		fmt.Fprintf(&script, "echo \"%s=[${%s-UNSET}]\"\n", k, k)
+	}
+	for k := range inherited {
+		fmt.Fprintf(&script, "echo \"%s=[${%s-UNSET}]\"\n", k, k)
+	}
+	script.WriteString("exit 1\n")
+
+	ts, _ := renderServer(t, script.String())
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	var started struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(res.Body).Decode(&started)
+	log, _ := waitForJob(t, ts, started.ID)["log"].(string)
+
+	for _, k := range denied {
+		if !strings.Contains(log, k+"=[UNSET]") {
+			t.Errorf("%s must be removed from the render environment, not inherited or blanked; child saw:\n%s", k, log)
+		}
+	}
+	for k, v := range inherited {
+		if !strings.Contains(log, fmt.Sprintf("%s=[%s]", k, v)) {
+			t.Errorf("%s must reach the renderer (the preview resolves against it); child saw:\n%s", k, log)
+		}
 	}
 }
