@@ -60,10 +60,16 @@ function fetchImpl() {
   return Promise.resolve({ json: async () => next.json });
 }
 
+// fontFaceLoads counts every FontFace(...) construction across the whole run
+// — the fan-out the bounded-font-previews fix (Task 13 review finding) exists
+// to cap. FontFace.load() itself always rejects (no font server in a test),
+// which is exactly why the fan-out was invisible before: nothing observed how
+// many loads were INITIATED, only whether they succeeded.
+let fontFaceLoads = 0;
 const ctx = vm.createContext({
   document,
   fetch: (...a) => fetchImpl(...a),
-  FontFace: class { load() { return Promise.reject(new Error("no font server in a test")); } },
+  FontFace: class { constructor() { fontFaceLoads++; } load() { return Promise.reject(new Error("no font server in a test")); } },
   CSS: { escape: (s) => s },
   console,
   confirm: () => true,
@@ -211,6 +217,48 @@ await withPicker({ files: [{ path: "media/x.png", name: "x.png", kind: "image", 
   const body = document.querySelector("#file-picker-body").innerHTML;
   has("degraded (empty for this kind): names the kind and the root", body, "No font files found under media");
 });
+
+// Font previews have no browser-native throttle to fall back on (unlike the
+// image row's loading="lazy" and the audio row's preload="none" checked
+// above): opening the dialog on a directory of many fonts must not fire one
+// concurrent FontFace fetch per font. This is what slipped through review —
+// FontFace.load() rejects in this harness either way, so only counting
+// CONSTRUCTIONS (not successes) makes the fan-out visible at all.
+{
+  const manyFonts = Array.from({ length: 50 }, (_, i) => (
+    { path: `media/common/font-${i}.ttf`, name: `font-${i}.ttf`, kind: "font", size: 1000 }
+  ));
+  invalidateFileList();
+  fetchQueue.push({ json: { files: manyFonts, roots: ["media"] } });
+  fontFaceLoads = 0;
+  await openFilePicker("layouts.main.font", "font");
+  check("font previews are bounded: a 50-font directory does not fire 50 concurrent loads",
+    fontFaceLoads > 0 && fontFaceLoads < 50, `fired ${fontFaceLoads} loads for 50 fonts`);
+
+  // The bound must not scale with N — reopening on an even bigger directory
+  // fires the same (small) number of loads, not more.
+  const moreFonts = Array.from({ length: 200 }, (_, i) => (
+    { path: `media/common/many-${i}.ttf`, name: `many-${i}.ttf`, kind: "font", size: 1000 }
+  ));
+  invalidateFileList();
+  fetchQueue.push({ json: { files: moreFonts, roots: ["media"] } });
+  const capAt50 = fontFaceLoads;
+  fontFaceLoads = 0;
+  await openFilePicker("layouts.main.font", "font");
+  eq("the cap does not grow with the directory size (200 fonts fires the same count as 50)",
+    fontFaceLoads, capAt50);
+
+  // Below the cap, every font is still previewed — this is a bound, not a
+  // near-total disabling of the feature.
+  const fewFonts = Array.from({ length: 3 }, (_, i) => (
+    { path: `media/common/few-${i}.ttf`, name: `few-${i}.ttf`, kind: "font", size: 1000 }
+  ));
+  invalidateFileList();
+  fetchQueue.push({ json: { files: fewFonts, roots: ["media"] } });
+  fontFaceLoads = 0;
+  await openFilePicker("layouts.main.font", "font");
+  eq("below the cap, every font is still previewed", fontFaceLoads, 3);
+}
 
 // A network failure must degrade exactly like an empty response — the picker
 // never throws into the caller, and the text field is left untouched either
