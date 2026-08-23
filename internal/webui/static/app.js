@@ -297,4 +297,11 @@ renderAll();
 renderStage();
 refreshStageDataNow();
 renderToolbar();
+// Capabilities decide what the toolbar even offers, so they are fetched once
+// at boot; a feature that appears later needs a reload, which is fine for a
+// tool somebody starts on their own machine.
+apiCapabilities().then((caps) => {
+  renderRenderControls(caps);
+  if (!caps.plex && caps.plexError) flash(`Plex previews off: ${caps.plexError}`);
+});
 convert();

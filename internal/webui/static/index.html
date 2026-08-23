@@ -10,6 +10,7 @@
 <header class="topbar">
   <h1>Pre-roll <span>Studio</span></h1>
   <div class="topbar-actions" id="manifest-actions"></div>
+  <div class="topbar-actions" id="render-actions"></div>
   <span class="spacer"></span>
   <button class="btn ghost" id="toggle-yaml" aria-expanded="false" aria-controls="yaml-drawer">YAML</button>
   <span id="status" aria-live="polite"></span>
@@ -29,6 +30,14 @@
     </div>
     <p class="muted">Click an element to select it, drag to move, drag the corner handle to resize. With the stage focused: Tab/Shift+Tab steps between elements, arrows nudge (Shift for 10px), Delete removes, Escape selects the scene.</p>
     <p class="muted" id="stage-note"></p>
+    <section class="render-panel" id="render-panel" hidden>
+      <div class="preview-head">
+        <h2>Render preview</h2>
+        <span id="render-status" aria-live="polite"></span>
+      </div>
+      <video id="render-video" controls playsinline hidden></video>
+      <pre id="render-log" class="render-log"></pre>
+    </section>
     <ul id="errors" class="errors" aria-live="polite" aria-label="Validation errors"></ul>
   </section>
 
@@ -71,6 +80,7 @@
 <script src="pickers.js"></script>
 <script src="inspector.js"></script>
 <script src="timeline.js"></script>
+<script src="renderjob.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

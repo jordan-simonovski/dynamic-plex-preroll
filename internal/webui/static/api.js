@@ -93,3 +93,32 @@ async function apiListFiles() {
   return fileListCache;
 }
 function invalidateFileList() { fileListCache = null; }
+
+// apiStartRender posts the in-editor manifest as-is — not the saved file, if
+// any — so Render always previews what is on screen. The server parses and
+// validates it before doing anything slow, so an invalid manifest fails in
+// milliseconds with the validator's own message rather than after minutes of
+// rendering; res.ok false covers that 422 the same way it covers a 409
+// (another render already running) or a 503 (no renderer configured).
+async function apiStartRender(manifest) {
+  try {
+    const res = await fetch("/api/render", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(manifest),
+    });
+    if (res.status === 202) return { ok: true, id: (await res.json()).id };
+    return { ok: false, error: await res.text() };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// Throws on both a refused request and a non-2xx reply, same as
+// apiGetManifest above: pollRenderJob is the only caller and already wraps
+// this in a try/catch, so one catch there covers both.
+async function apiRenderStatus(id) {
+  const res = await fetch(`/api/render/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(await res.text());
+  return await res.json();
+}
