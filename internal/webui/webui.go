@@ -60,6 +60,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/convert", s.convert)
 	mux.HandleFunc("GET /api/capabilities", s.capabilities)
+	mux.HandleFunc("GET /api/files", s.files)
+	mux.HandleFunc("GET /api/files/raw", s.filesRaw)
 	mux.HandleFunc("GET /api/manifests", s.list)
 	mux.HandleFunc("GET /api/manifests/{name}", s.get)
 	mux.HandleFunc("PUT /api/manifests/{name}", s.save)
