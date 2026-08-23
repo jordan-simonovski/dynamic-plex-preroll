@@ -37,8 +37,19 @@ const document = {
     return els.get(sel);
   },
   createElement: () => makeEl(),
+  // syncPath() sweeps every data-path-bound control. Nothing here renders real
+  // markup, so a test registers its own fake controls in `bound`.
+  querySelectorAll: () => bound,
   fonts: { add() {} },
 };
+const bound = [];
+function boundInput(path, value) {
+  const el = makeEl();
+  el.dataset.path = path;
+  el.value = value;
+  bound.push(el);
+  return el;
+}
 
 // Requests to /api/convert are parked in `pending` so a test can resolve them
 // out of order; everything else answers immediately.
@@ -67,7 +78,7 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "api.js", "stage.js", "sections.js", "app.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "api.js", "stage.js", "inspector.js", "sections.js", "app.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 // `state` is a top-level `let` in state.js, so it lives in the context's
@@ -166,6 +177,33 @@ function check(name, cond, detail) {
   let threw = false;
   try { setPath(obj, "data.top.movies.params.x", 1); } catch { threw = true; }
   check("setPath: a dotted key throws", threw);
+}
+
+// syncPath: the inspector and the General card bind the same paths, and typing
+// does not re-render the form — so the OTHER control has to be pushed the new
+// value or it keeps showing the old one (and writes it back on the next edit).
+{
+  ctx.__t.setState({ ...ctx.emptyManifest(), name: "", output: "" });
+  const typed = boundInput("name", "");
+  const mirror = boundInput("name", "");
+  const output = boundInput("output", "");
+
+  typed.value = "my-preroll";
+  ctx.onEditorInput({ target: typed });
+  check("syncPath: the state took the edit", ctx.__t.getState().name === "my-preroll");
+  check("syncPath: the other control bound to the same path follows",
+    mirror.value === "my-preroll", mirror.value);
+  check("syncPath: a derived field is pushed out too — everywhere, not just the General card",
+    output.value === "output/my-preroll.mp4", output.value);
+
+  // Once output is customised, it stops being derived from the name.
+  output.value = "custom.mp4";
+  ctx.onEditorInput({ target: output });
+  typed.value = "renamed";
+  ctx.onEditorInput({ target: typed });
+  check("syncPath: a customised output is left alone",
+    ctx.__t.getState().output === "custom.mp4", ctx.__t.getState().output);
+  bound.length = 0;
 }
 
 // convert(): responses that land out of order must not overwrite newer state.
