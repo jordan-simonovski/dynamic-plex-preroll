@@ -16,13 +16,18 @@ const path = require("path");
 const vm = require("vm");
 
 // ---- stub DOM --------------------------------------------------------------
+// The canvas bits are stubs to the point of inertia: stage.js is covered by
+// stage_test.js, and here it only has to boot without a browser.
+const canvasStub = new Proxy({ fillStyle: "", font: "" }, { get: (t, k) => (k in t ? t[k] : () => ({ width: 0 })) });
 function makeEl() {
   return {
     innerHTML: "", textContent: "", value: "", checked: false,
+    clientWidth: 800, width: 0, height: 0, style: {},
     dataset: {}, options: [],
     classList: { toggle() {}, add() {}, remove() {} },
     addEventListener() {}, appendChild() {}, closest() { return null; },
     querySelector: () => makeEl(),
+    getContext: () => canvasStub,
   };
 }
 const els = new Map();
@@ -32,6 +37,7 @@ const document = {
     return els.get(sel);
   },
   createElement: () => makeEl(),
+  fonts: { add() {} },
 };
 
 // Requests to /api/convert are parked in `pending` so a test can resolve them
@@ -52,6 +58,7 @@ const flashes = [];
 
 const ctx = vm.createContext({
   document,
+  window: { addEventListener() {}, devicePixelRatio: 1 },
   fetch: fetchStub,
   setTimeout, clearTimeout,
   confirm: () => confirmAnswer,
@@ -60,7 +67,7 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "util.js", "state.js", "api.js", "sections.js", "app.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "api.js", "stage.js", "sections.js", "app.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 // `state` is a top-level `let` in state.js, so it lives in the context's
@@ -72,6 +79,7 @@ vm.runInContext(`globalThis.__t = {
 
 // The renderers are exercised at boot above; from here they only add noise.
 ctx.renderAll = () => {};
+ctx.renderStage = () => {};
 ctx.flash = (msg, isError) => flashes.push({ msg, isError });
 pending.length = 0; // drop the boot convert; later converts get higher seqs
 

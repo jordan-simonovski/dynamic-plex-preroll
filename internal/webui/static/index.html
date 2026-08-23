@@ -10,30 +10,58 @@
 <header class="topbar">
   <h1>Pre-roll <span>Studio</span></h1>
   <div class="topbar-actions" id="manifest-actions"></div>
+  <span class="spacer"></span>
+  <button class="btn ghost" id="toggle-yaml" aria-expanded="false" aria-controls="yaml-drawer">YAML</button>
   <span id="status" aria-live="polite"></span>
 </header>
-<main class="split">
-  <div class="editor" id="editor">
-    <section class="card" id="section-general"></section>
-    <section class="card" id="section-audio"></section>
-    <section class="card" id="section-data"></section>
-    <section class="card" id="section-layouts"></section>
-    <section class="card" id="section-scenes"></section>
-  </div>
-  <aside class="preview">
-    <div class="preview-head">
-      <h2>manifest.yaml</h2>
-      <button id="copy-yaml" class="btn ghost">Copy</button>
+
+<main class="studio">
+  <nav class="rail" id="rail" aria-label="Scenes">
+    <h2>Scenes</h2>
+    <p class="muted">The first scene is on the stage. Add and reorder scenes in the Scenes card below.</p>
+  </nav>
+
+  <section class="stage-pane">
+    <div class="stage-bar">
+      <span id="stage-label" class="muted"></span>
+      <span class="spacer"></span>
+      <label class="check"><input type="checkbox" id="toggle-safe"> Safe area</label>
     </div>
+    <div class="stage-frame" id="stage-frame">
+      <canvas id="stage" role="img" aria-label="Scene preview"></canvas>
+    </div>
+    <p class="muted" id="stage-note"></p>
     <ul id="errors" class="errors" aria-live="polite" aria-label="Validation errors"></ul>
-    <pre id="yaml"><code></code></pre>
+  </section>
+
+  <aside class="inspector" id="inspector" aria-label="Properties">
+    <h2>Properties</h2>
+    <p class="muted">Layout and element properties are in the Layouts card below.</p>
   </aside>
 </main>
+
+<div class="editor" id="editor">
+  <section class="card" id="section-general"></section>
+  <section class="card" id="section-audio"></section>
+  <section class="card" id="section-data"></section>
+  <section class="card" id="section-layouts"></section>
+  <section class="card" id="section-scenes"></section>
+</div>
+
+<div class="drawer" id="yaml-drawer" hidden>
+  <div class="preview-head">
+    <h2>manifest.yaml</h2>
+    <button id="copy-yaml" class="btn ghost">Copy</button>
+  </div>
+  <pre id="yaml"><code></code></pre>
+</div>
+
 <script src="providers.js"></script>
 <script src="util.js"></script>
 <script src="geometry.js"></script>
 <script src="state.js"></script>
 <script src="api.js"></script>
+<script src="stage.js"></script>
 <script src="sections.js"></script>
 <script src="app.js"></script>
 </body>
