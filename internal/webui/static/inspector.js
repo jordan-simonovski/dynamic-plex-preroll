@@ -40,7 +40,14 @@ const inspectorPanels = {
 
 function renderInspector() {
   const target = inspectorTarget();
-  $("#inspector").innerHTML = inspectorPanels[target.kind](target);
+  const panel = $("#inspector");
+  panel.innerHTML = inspectorPanels[target.kind](target);
+  // Holdover from the Task 8 review: replacing #inspector's innerHTML drops
+  // focus to <body>, so a keyboard user has to Tab all the way back from the
+  // top of the document after every selection change. Full focus management
+  // (restoring the field that made sense to land on, not just "the first
+  // one") is Task 11's job; this is the one-line stopgap.
+  panel.querySelector("input, select, textarea, button")?.focus?.();
 }
 
 // selectElement is the ONE place selection.element changes, so the outline on
@@ -154,15 +161,21 @@ function sceneKindFields(sc, i, base) {
 // elementInspector. The element rows are also the KEYBOARD path to a selection
 // — clicking the canvas must never be the only way to reach an element.
 function layoutSection(sc) {
+  if (sc.kind === "image") return ""; // a still image has nothing to lay out
   const name = currentLayoutName();
   const layout = currentLayout();
+  // CRITICAL FIX (Task 8 regression): "+ Add layout" must be reachable
+  // whether or not the current scene already has one — matching the retired
+  // Layouts card, whose "+ Add layout" button was unconditional. Before this
+  // fix it only rendered in the `!layout` branch below, and sceneDefaults()
+  // always hands a fresh render scene the first existing layout, so once any
+  // layout existed a second one could never be created at all.
+  const addBtn = `<button class="btn ghost" data-action="add-layout">+ Add layout</button>`;
   if (!layout) {
-    if (sc.kind === "image") return ""; // a still image has nothing to lay out
     const missing = name
       ? `This scene names the layout "${esc(name)}", which does not exist.`
       : sc.kind === "clips" ? "This clip montage has no label layout." : "This scene has no layout yet.";
-    return `<h3>Layout</h3><p class="empty">${missing}</p>
-      <button class="btn" data-action="add-layout">+ New layout</button>`;
+    return `<h3>Layout</h3><p class="empty">${missing}</p>${addBtn}`;
   }
   const base = `layouts.${name}`;
   const els = (layout.elements || []).map((el, i) =>
@@ -173,6 +186,7 @@ function layoutSection(sc) {
   return `<h3>Layout</h3>
     <div class="subcard-head">
       <input type="text" class="name-input" data-rename="layouts" data-old="${esc(name)}" value="${esc(name)}" aria-label="Layout name">
+      ${addBtn}
       <button class="btn ghost danger" data-action="remove-layout" data-name="${esc(name)}">Remove</button>
     </div>
     <div class="stack">
@@ -211,8 +225,12 @@ actions["add-element-here"] = (d) => {
         size: Math.round(height * 0.09), color: "white", align: "center" });
   selectElement(layout.elements.length - 1);
 };
-// A new layout is pointed at by the scene that asked for it — a layout nothing
-// references is unreachable from the inspector, which is the only surface left.
+// A new layout is pointed at by the scene that asked for it, replacing
+// whatever it named before — a layout nothing references is unreachable from
+// the inspector, which is the only surface left to browse layouts from. The
+// scene's previous layout (if any) stays in state.layouts and is still
+// reachable through that scene's own "Layout" dropdown, exactly like a layout
+// the retired Layouts card created before any scene picked it.
 actions["add-layout"] = () => {
   const name = uniqueKey(state.layouts, "layout");
   const { width, height } = stageDimensions();
@@ -226,7 +244,7 @@ actions["add-layout"] = () => {
   if (sc && sc.kind === "render") sc.layout = name;
   if (sc && sc.kind === "clips") sc.label = name;
   selection.element = 0;
-  renderAll(); // the Scenes card lists layouts too
+  renderAll(); // the timeline rail and inspector both need repainting
 };
 actions["remove-layout"] = (d) => {
   delete state.layouts[d.name];

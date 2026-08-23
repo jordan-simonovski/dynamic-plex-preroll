@@ -108,67 +108,6 @@ rerenderHooks["provider"] = (dataset) => {
   ds.params = defaultParams(ds.provider);
 };
 
-function renderScenes() {
-  const cards = state.scenes.map((sc, i) => sceneCard(sc, i)).join("");
-  $("#section-scenes").innerHTML = `
-    <h2>Scenes</h2>
-    <p class="muted">The timeline — played top to bottom.</p>
-    ${cards || `<p class="empty">No scenes yet — a pre-roll needs at least one.</p>`}
-    <button class="btn" data-action="add-scene" data-kind="render">+ Rendered frame</button>
-    <button class="btn ghost" data-action="add-scene" data-kind="clips">+ Clip montage</button>
-    <button class="btn ghost" data-action="add-scene" data-kind="image">+ Still image</button>`;
-}
-
-function sceneCard(sc, i) {
-  const base = `scenes.${i}`;
-  const head = `<div class="subcard-head">
-    <strong>#${i + 1}</strong>
-    ${select(`${base}.kind`, sc.kind, ["image", "render", "clips"],
-      { rerender: "scene-kind", attrs: `data-index="${i}" data-prev="${esc(sc.kind)}"` })}
-    <span class="spacer"></span>
-    <button class="btn ghost" data-action="move-scene" data-index="${i}" data-dir="-1">↑</button>
-    <button class="btn ghost" data-action="move-scene" data-index="${i}" data-dir="1">↓</button>
-    <button class="btn ghost danger" data-action="remove-scene" data-index="${i}">×</button>
-  </div>`;
-  return `<div class="subcard">${head}${sceneFields(sc, i, base)}</div>`;
-}
-
-function sceneFields(sc, i, base) {
-  if (sc.kind === "image") {
-    return `<div class="grid2">
-      ${field("Image file", textInput(`${base}.file`, sc.file, { placeholder: "media/common/intro.png" }))}
-      ${field("Duration (s)", numInput(`${base}.duration`, sc.duration, { min: 0 }))}
-    </div>`;
-  }
-  if (sc.kind === "clips") {
-    return `<div class="grid2">
-      ${field("Data source", select(`${base}.source`, sc.source, Object.keys(state.data)),
-        "Items need trailer/media URLs — e.g. plex.trailers, or trailers: true")}
-      ${field("Seconds per clip", numInput(`${base}.perClip`, sc.perClip, { min: 0 }))}
-      ${field("Label layout", select(`${base}.label`, sc.label ?? "", ["", ...Object.keys(state.layouts)], { emptyLabel: "(no label)", rerender: "scene-layout" }),
-        "Overlaid per clip with that item's Name/Rank in scope — use a transparent background")}
-    </div>`;
-  }
-  // render
-  const bg = sc.background;
-  return `<div class="grid2">
-      ${field("Layout", select(`${base}.layout`, sc.layout, Object.keys(state.layouts), { rerender: "scene-layout" }))}
-      ${field("Duration (s)", numInput(`${base}.duration`, sc.duration, { min: 0 }))}
-    </div>
-    ${varRows(sc, i, base)}
-    <label class="check"><input type="checkbox" data-action-toggle="scene-bg" data-index="${i}"${bg ? " checked" : ""}> Dynamic background</label>
-    ${bg ? `<div class="grid2">
-      ${field("Source", select(`${base}.background.source`, bg.source, Object.keys(state.data)))}
-      ${field("Mode", select(`${base}.background.mode`, bg.mode, ["art", "poster", "trailers"]),
-        "art/poster: still images · trailers: muted video montage")}
-      ${field("Tile", select(`${base}.background.tile`, bg.tile ?? "", ["", "cover", "grid", "sequence"], { emptyLabel: "grid (default)" }),
-        "grid: up to 4 items 2×2 · sequence: trailers back to back")}
-      ${field("Dim", `<input type="range" data-path="${esc(base)}.background.dim" data-type="number" min="0" max="1" step="0.05" value="${esc(bg.dim ?? 0)}">`,
-        "0 = untouched, 1 = black — keeps overlaid text legible")}
-      ${field("Item limit", numInput(`${base}.background.limit`, bg.limit ?? 0, { int: true, min: 0 }), "0 = all")}
-    </div>` : ""}`;
-}
-
 // Vars feed extra template variables into the scene's layout, so one layout
 // serves many scenes with different text.
 function varRows(sc, i, base) {
@@ -182,18 +121,15 @@ function varRows(sc, i, base) {
     <button class="btn ghost" data-action="add-var" data-index="${i}">+ Add variable</button>`;
 }
 
-// These all renderAll() rather than renderScenes(): the inspector shows the
-// same scene, and its template-variable rows are the ones being clicked when
-// the button lives there. Re-rendering only this card would leave the panel
-// showing a variable that is already gone (or missing one just added).
-actions["add-scene"] = (d) => { state.scenes.push(sceneDefaults(d.kind)); renderAll(); };
-actions["remove-scene"] = (d) => { state.scenes.splice(+d.index, 1); renderAll(); };
-actions["move-scene"] = (d) => {
-  const i = +d.index, j = i + +d.dir;
-  if (j < 0 || j >= state.scenes.length) return;
-  [state.scenes[i], state.scenes[j]] = [state.scenes[j], state.scenes[i]];
-  renderAll();
-};
+// Both renderAll() rather than just the inspector: the var rows render
+// wherever the scene they belong to is shown (now only the inspector, since
+// the Scenes card is gone), and renderAll() is what repaints that plus the
+// timeline rail's summary in one call.
+//
+// Deviation from the Task 10 brief: it describes these two as calling
+// renderScenes(), which would need changing to renderInspector(). On disk
+// they already called renderAll() (a Task 8 fix, since the inspector shows
+// the same scene the Scenes card did) — nothing to change here.
 actions["add-var"] = (d) => {
   const sc = state.scenes[+d.index];
   sc.vars = sc.vars || {};
@@ -221,9 +157,9 @@ rerenderHooks["scene-kind"] = (dataset) => {
 };
 
 function renderAll() {
+  renderTimeline();
   renderGeneral();
   renderAudio();
   renderData();
-  renderScenes();
   renderInspector();
 }
