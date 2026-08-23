@@ -302,6 +302,20 @@ const FIXTURE = () => ({
   }
   // engine.go's backgroundTile() defaults an unset tile to GRID, not cover.
   has("scene: the tile default is named correctly", panel(), "grid (default)");
+  // engine.go's backgroundLimit() returns defaultBackgroundLimit (4) for any
+  // Limit <= 0, on both the image and the montage path. The hint used to say
+  // "0 = all", which is the opposite of what the renderer does.
+  has("scene: the item-limit hint names the engine's real default", panel(), "0 uses the default of 4");
+  not("scene: ...and no longer claims 0 means all", panel(), "0 = all");
+
+  // Dim is a range input, so its value goes into an attribute like every other
+  // control's — its esc() got fixed without a test while its siblings got one.
+  st.scenes[0].background.dim = '"><script>alert(1)</script>';
+  renderInspector();
+  not("scene: a hostile dim value cannot break out of the range input's attribute",
+    panel(), '"><script>alert(1)</script>');
+  has("scene: ...and is escaped rather than dropped", panel(), ctx.esc('"><script>alert(1)</script>'));
+  st.scenes[0].background.dim = 0.35;
 }
 
 // ---- selection transitions -------------------------------------------------

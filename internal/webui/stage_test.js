@@ -297,11 +297,36 @@ const PLACEHOLDER_NAME = __t.placeholderName();
   eq("lines: cleared data falls back to placeholders again", stageLines(list, scene).length, 5);
 }
 
-// A clips label layout is rendered per item, so the stage previews item 1.
+// A clips label layout is rendered per item, so the stage previews the first
+// item the renderer will actually reach.
 {
   __t.setState({ data: { top: {} }, layouts: {}, scenes: [{ kind: "clips", source: "top", label: "l" }] });
   __t.select(0);
   eq("vars: a clips label sees the first item", stageVars(currentScene()).Name, "The Grand Budapest Hotel");
+
+  // engine.go:196-199 skips an item with no MediaURL BEFORE it renders a label,
+  // so the render's first label belongs to the first PLAYABLE item. The
+  // placeholders are all hasMedia:true, which is why the previous case passed
+  // either way; only real Plex items are ever unplayable.
+  setStageData({ configured: true, sources: { top: { items: [
+    { rank: 1, name: "No Trailer Here", views: 9, hasMedia: false },
+    { rank: 2, name: "Has A Trailer", views: 8, hasMedia: true },
+  ] } } });
+  eq("vars: a clips label previews the first PLAYABLE item, not the first item",
+    stageVars(currentScene()).Name, "Has A Trailer");
+  eq("vars: ...and the Rank shown is that item's own", stageVars(currentScene()).Rank, 2);
+
+  // An item from a source that does not report hasMedia at all is assumed
+  // playable — the field is absent, not false.
+  setStageData({ configured: true, sources: { top: { items: [{ rank: 1, name: "Unknown" }] } } });
+  eq("vars: a missing hasMedia counts as playable", stageVars(currentScene()).Name, "Unknown");
+
+  // Nothing playable at all still draws something rather than blank; the note
+  // under the canvas is what says the render will skip it.
+  setStageData({ configured: true, sources: { top: { items: [{ rank: 1, name: "Only One", hasMedia: false }] } } });
+  eq("vars: an all-unplayable source still previews its first item",
+    stageVars(currentScene()).Name, "Only One");
+  setStageData(null);
 }
 
 // M2: engine.go's sceneContext (engine.go:339-348) overlays Scene.Vars only
