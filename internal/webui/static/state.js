@@ -58,11 +58,48 @@ function normalize(m) {
   return out;
 }
 
+// dottedKey finds the first key in a manifest that this editor cannot address,
+// or "" when there is none. Every input is bound by a dot-separated data-path
+// string ("data.top.params.limit"), so a key that itself contains a dot —
+// data["top.movies"], a dotted layout name, scene var or provider param — is
+// walked as two steps that do not exist: the edit misses, and getPath/setPath
+// find nothing there. renameKey already refuses to CREATE such a key; this
+// refuses to OPEN one that arrived from disk, which is the only other way in.
+//
+// ponytail: reject at load rather than escape. The alternative is an escaping
+// scheme threaded through every data-path producer (textInput/numInput/select/
+// the rename inputs/pickers.js) and through getPath/setPath's splitter — a
+// disproportionate change for something none of the shipped manifests does. If
+// dotted names ever become a real use case, that is the upgrade path.
+function dottedKey(m) {
+  for (const [name, ds] of Object.entries(m.data || {})) {
+    if (name.includes(".")) return `the data source "${name}"`;
+    for (const p of Object.keys(ds?.params || {}))
+      if (p.includes(".")) return `the parameter "${p}" of data source "${name}"`;
+  }
+  for (const name of Object.keys(m.layouts || {}))
+    if (name.includes(".")) return `the layout "${name}"`;
+  for (const [i, sc] of (m.scenes || []).entries())
+    for (const v of Object.keys(sc?.vars || {}))
+      if (v.includes(".")) return `the variable "${v}" of scene ${i + 1}`;
+  return "";
+}
+
 // replaceState swaps the whole manifest and resets the selection, which would
 // otherwise point at a scene or element the new manifest does not have.
+// Returns false — leaving the editor exactly as it was — when the manifest
+// carries a key this editor cannot address; the caller must not proceed as if
+// it had loaded. Saying so up front is the honest failure: the alternative is
+// opening the file and losing the first edit to one of those keys.
 function replaceState(m) {
+  const bad = dottedKey(m);
+  if (bad) {
+    flash(`Can't open this manifest: ${bad} contains a dot, which this editor can't address. Rename it in the YAML first.`, true);
+    return false;
+  }
   state = normalize(m);
   selection = { sceneIndex: 0, element: null, dataSource: null };
+  return true;
 }
 
 function deriveOutput(name) {
