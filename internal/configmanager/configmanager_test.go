@@ -76,3 +76,28 @@ func TestMustReadConfig(t *testing.T) {
 		t.Errorf("PeriodInterval = %q, want %q", conf.PeriodInterval, PeriodMonth)
 	}
 }
+
+func TestReadConfigReturnsErrorInsteadOfPanicking(t *testing.T) {
+	for _, key := range []string{"PLEX_URL", "PLEX_TOKEN", "MAX_ITEMS", "PERIOD_INTERVAL", "MOVIE_SECTION_ID", "TV_SHOW_SECTION_ID"} {
+		t.Setenv(key, "")
+	}
+	if _, err := ReadConfig(); err == nil {
+		t.Fatal("want an error when required vars are unset, got nil")
+	}
+}
+
+func TestReadConfigSucceedsWhenSet(t *testing.T) {
+	t.Setenv("PLEX_URL", "http://plex:32400")
+	t.Setenv("PLEX_TOKEN", "tok")
+	t.Setenv("MAX_ITEMS", "5")
+	t.Setenv("PERIOD_INTERVAL", "MONTH")
+	t.Setenv("MOVIE_SECTION_ID", "1")
+	t.Setenv("TV_SHOW_SECTION_ID", "2")
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+	if cfg.PlexURL != "http://plex:32400" || cfg.MaxItems != 5 {
+		t.Fatalf("config not populated: %+v", cfg)
+	}
+}
