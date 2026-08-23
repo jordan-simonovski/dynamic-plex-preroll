@@ -36,6 +36,108 @@ function confirmDiscard() {
   return confirm("Discard the current editor contents?");
 }
 
+// summariseManifest is the one-line description shown beside each starting
+// point: what it is made of, so the list reads as a menu of approaches rather
+// than a list of filenames.
+function summariseManifest(m) {
+  const scenes = m.scenes || [];
+  const kinds = {};
+  for (const sc of scenes) kinds[sc.kind] = (kinds[sc.kind] || 0) + 1;
+  const parts = Object.entries(kinds).map(([k, n]) => `${n} ${k}`);
+  const sources = Object.values(m.data || {}).map((ds) => ds.provider);
+  const unique = [...new Set(sources)];
+  return [
+    parts.length ? parts.join(", ") : "no scenes",
+    unique.length ? `from ${unique.join(", ")}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+// openNewManifestDialog offers the existing manifests as starting points. They
+// are fetched one by one because the summary needs their contents; on a local
+// server with a dozen manifests that is instant, and the alternative is a new
+// endpoint for something the browser can already ask for.
+//
+// The discard confirm fires HERE, once, before the dialog even opens — the
+// same gate the old single-purpose New button had, now covering both of the
+// dialog's outcomes (empty or template) rather than just the empty one.
+// Deviation from the brief: it never confirmed at all, which would silently
+// drop unsaved work the moment either "new-empty" or "new-from" ran.
+async function openNewManifestDialog() {
+  if (!confirmDiscard()) return;
+  const dialog = $("#new-picker");
+  const body = $("#new-picker-body");
+  body.innerHTML = `<p class="muted">Loading…</p>`;
+  dialog.showModal();
+
+  const names = await apiListManifests();
+  const loaded = await Promise.all(names.map(async (name) => {
+    try {
+      return { name, manifest: await apiGetManifest(name) };
+    } catch {
+      return { name, manifest: null };
+    }
+  }));
+
+  // Degrade gracefully with nothing to offer: the empty option is still
+  // useful on its own, so it is never hidden — only the "existing manifest"
+  // section (and its explanatory copy) disappears when there is nothing to
+  // list, rather than showing a heading over an empty list.
+  body.innerHTML = `
+    <button type="button" class="template-row" data-action="new-empty">
+      <code>Empty manifest</code>
+      <span class="template-explain">Start from nothing: one blank pre-roll, no scenes.</span>
+    </button>
+    ${loaded.length ? `
+    <h3>Start from an existing manifest</h3>
+    <p class="muted">A copy is loaded with the name cleared, so saving creates a new file and never overwrites the original.</p>
+    ${loaded.map(({ name, manifest }) => `
+      <button type="button" class="template-row" data-action="new-from" data-name="${esc(name)}">
+        <code>${esc(name)}</code>
+        <span class="template-explain">${esc(manifest ? summariseManifest(manifest) : "could not be read")}</span>
+      </button>`).join("")}`
+      : `<p class="muted">No other manifests are in the manifest directory yet.</p>`}`;
+}
+
+// startFromTemplate loads an existing manifest as a COPY, never an open: the
+// name is cleared so the very next Save can't silently overwrite the file it
+// came from, and — the deviation from the brief, which omits this — openedFile
+// is cleared too. saveManifest() targets openedFile before it ever looks at
+// state.name, so leaving openedFile pointing at the source (e.g. because the
+// editor had that very file open via the manifest picker before New was
+// clicked) would clobber it on Save even with the name blanked out. Both
+// have to be cleared for "start from a template" to mean "a copy", not "open".
+async function startFromTemplate(name) {
+  let m;
+  try {
+    m = await apiGetManifest(name);
+  } catch (err) {
+    flash(`Could not read ${name}: ${err.message}`, true);
+    return;
+  }
+  m.name = "";
+  m.output = "";
+  openedFile = "";
+  replaceState(m);
+  $("#new-picker").close();
+  $("#manifest-picker").value = "";
+  renderAll();
+  refreshStageDataNow(); // replaceState() bypasses onStateChange
+  convert();
+  flash(`Started from ${name} — give it a name before saving`);
+}
+
+actions["new-empty"] = () => {
+  replaceState(emptyManifest());
+  openedFile = ""; // deviation from the brief: also missing there
+  $("#new-picker").close();
+  $("#manifest-picker").value = "";
+  renderAll();
+  refreshStageDataNow(); // replaceState() bypasses onStateChange
+  convert();
+};
+actions["new-from"] = (d) => startFromTemplate(d.name);
+actions["close-new-picker"] = () => $("#new-picker").close();
+
 async function renderToolbar() {
   const names = await apiListManifests();
   $("#manifest-actions").innerHTML = `
@@ -55,19 +157,7 @@ async function renderToolbar() {
     }
     loadManifest(e.target.value);
   };
-  $("#btn-new").onclick = () => {
-    if (!confirmDiscard()) return;
-    replaceState(emptyManifest());
-    openedFile = "";
-    $("#manifest-picker").value = "";
-    renderAll();
-    renderStage();
-    // replaceState() bypasses onStateChange, so nothing else refetches: a
-    // stale resolve from the manifest just left would otherwise linger keyed
-    // under whatever source names this one reuses.
-    refreshStageDataNow();
-    convert();
-  };
+  $("#btn-new").onclick = openNewManifestDialog;
   $("#btn-save").onclick = saveManifest;
   $("#btn-delete").onclick = deleteManifest;
 }
@@ -229,7 +319,7 @@ function onEditorClick(e) {
 // The inspector and the timeline rail use the same data-path/data-action
 // conventions as the phase-1 form, so they get the same three delegated
 // listeners rather than their own.
-for (const root of ["#inspector", "#rail", "#file-picker", "#template-picker"]) {
+for (const root of ["#inspector", "#rail", "#file-picker", "#template-picker", "#new-picker"]) {
   const el = $(root);
   el.addEventListener("input", onEditorInput);
   el.addEventListener("change", onEditorChange);
