@@ -165,28 +165,65 @@ replaces, `original` keeps clip audio, `mix` blends). `audio.start` seeks into t
 track (seconds) so a manifest can drop in on a hook instead of the intro;
 `audio.fadeOut` is output-relative.
 
-## Config UI
+## Pre-roll Studio (the config UI)
 
-A browser-based editor for building manifests without hand-writing YAML.
+`preroll-ui` is a visual editor for manifests. Run it and open <http://localhost:8382>.
 
 ```bash
-docker compose up -d preroll-ui   # http://localhost:8382
-# or locally (pure Go, no ImageMagick needed):
-go run ./cmd/preroll-ui -manifest-dir manifests
+docker compose up -d preroll-ui
+# or, locally:
+go run ./cmd/preroll-ui -manifest-dir manifests -media-dir media
 ```
 
-The editor covers the whole DSL — data sources (with per-provider parameter
-hints), layouts, the scene timeline, and audio — and shows the generated YAML
-live with validation errors as you type. **Save** writes the manifest into the
-manifest directory, so the next render run (`docker compose run plex-pre-roll`
-with `MANIFEST_DIR` set) picks it up. Saves are strict: an invalid manifest is
-refused rather than written.
+**The three panes.** The left rail is the timeline: every scene, sized by its
+duration, click to select and drag to reorder. The centre is the stage: a live
+16:9 preview of the selected scene drawn with the same rules the renderer uses,
+so an element sits where you put it. Click an element to select it, drag to
+move it, drag the corner handle to resize. The right pane is the inspector,
+showing properties for whatever is selected — an element, the scene, a data
+source, or the pre-roll itself. The canonical YAML is still there behind the
+**YAML** button, with its live validation errors.
 
-Saving rewrites the file from the manifest structure, which drops any comments
-you hand-wrote in it. The previous contents are kept alongside as
-`<name>.yaml.bak` (the renderer ignores `.bak` files), and writes are atomic —
-a crash mid-save can never leave a truncated manifest for the renderer to trip
-over.
+**Keyboard.** Focus the stage and press Tab to cycle elements, arrows to nudge
+(Shift for ten pixels), Delete to remove, Escape to select the scene.
+
+**Configuration.**
+
+| Flag | Env | Default | What it does |
+| --- | --- | --- | --- |
+| `-addr` | `UI_ADDR` | `:8382` | Listen address |
+| `-manifest-dir` | `MANIFEST_DIR` | `manifests` | Where manifests are listed, loaded and saved |
+| `-media-dir` | `MEDIA_DIR` | `media` | Comma-separated roots the file picker may browse |
+| `-render-bin` | `RENDER_BIN` | found on PATH | The `plex-pre-rolls` binary the render button executes |
+| `-render-dir` | `RENDER_DIR` | `pre-roll-output/.ui-renders` | Scratch for UI-triggered renders |
+| `-work-dir` | `WORK_DIR` | the process's own | Working directory renders run in |
+
+The UI also reads the same `PLEX_*` variables as the renderer. With them it
+shows real titles and artwork on the stage and can test a data source against
+the live server; without them it shows placeholder data and says so.
+
+**Everything optional degrades.** No Plex connection: placeholder data, and the
+editor works normally. No media directory: the file picker explains that and
+the path fields still accept anything typed. No render binary: the render
+button is replaced by "Rendering unavailable". None of these stop you editing,
+validating or saving a manifest.
+
+`docker compose up -d preroll-ui` runs the same combined image as
+`plex-pre-roll`, so the render binary is always present there and
+`render:true` requires only that `.env` and `manifests/`/`media/` are mounted
+(the compose file already does this). Running `go run ./cmd/preroll-ui`
+locally needs `plex-pre-rolls` on `PATH` (or `-render-bin`) for the render
+button to appear at all.
+
+**Rendering from the UI** writes the manifest to the render scratch directory
+— never to the manifest directory the batch renderer globs — runs
+`plex-pre-rolls` as a subprocess, streams its output into the page, and plays
+the resulting mp4 inline. One render at a time.
+
+**Saving is fail-closed and atomic**: an invalid manifest is never written, and
+a valid one is written to a temp file and renamed over the target, so a batch
+render never sees a half-written file. The previous contents are kept as
+`<name>.yaml.bak`.
 
 The UI has no auth — it can read, write and delete files in `MANIFEST_DIR`. It
 only accepts requests addressed to `localhost` or a bare IP, so a malicious web
