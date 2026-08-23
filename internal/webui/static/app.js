@@ -61,6 +61,7 @@ async function renderToolbar() {
     openedFile = "";
     $("#manifest-picker").value = "";
     renderAll();
+    renderStage();
     convert();
   };
   $("#btn-save").onclick = saveManifest;
@@ -76,6 +77,7 @@ async function loadManifest(name) {
   }
   openedFile = name;
   renderAll();
+  renderStage();
   convert();
   flash(`Loaded ${name}`);
 }
@@ -121,6 +123,7 @@ async function deleteManifest() {
   replaceState(emptyManifest());
   openedFile = "";
   renderAll();
+  renderStage();
   convert();
   renderToolbar();
 }
@@ -141,6 +144,7 @@ $("#editor").addEventListener("input", (e) => {
   } else {
     setPath(state, path, coerce(e.target));
   }
+  renderStage();
   scheduleConvert();
 });
 
@@ -152,6 +156,7 @@ $("#editor").addEventListener("change", (e) => {
       ? { source: Object.keys(state.data)[0] || "", mode: "art", tile: "", dim: 0.35, limit: 0 }
       : null;
     renderScenes();
+    renderStage();
     scheduleConvert();
     return;
   }
@@ -162,6 +167,7 @@ $("#editor").addEventListener("change", (e) => {
   if (t.dataset.rerender) {
     rerenderHooks[t.dataset.rerender]?.(t.dataset, t);
     renderAll();
+    renderStage();
     scheduleConvert();
   }
 });
@@ -170,6 +176,7 @@ $("#editor").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-action]");
   if (!btn) return;
   actions[btn.dataset.action]?.(btn.dataset);
+  renderStage();
   scheduleConvert();
 });
 
@@ -178,11 +185,27 @@ $("#copy-yaml").onclick = async () => {
   flash("YAML copied");
 };
 
+// ---- stage chrome ----------------------------------------------------------
+// The YAML pane is a drawer now. `hidden` is the whole state — no class, no
+// stored flag — so the button's aria-expanded is derived from it and the two
+// can never disagree.
+$("#toggle-yaml").onclick = () => {
+  const drawer = $("#yaml-drawer");
+  const open = drawer.hasAttribute("hidden");
+  drawer.toggleAttribute("hidden", !open);
+  $("#toggle-yaml").setAttribute("aria-expanded", String(open));
+};
+$("#toggle-safe").onchange = renderStage;
+
 // ---- boot ------------------------------------------------------------------
 // State mutations that change the form's shape re-render everything and
 // re-validate; a rejected rename only needs the form put back. state.js calls
 // these without knowing what "everything" is.
-setStateChangeHandler(() => { renderAll(); scheduleConvert(); }, () => renderAll());
+setStateChangeHandler(
+  () => { renderAll(); renderStage(); scheduleConvert(); },
+  () => renderAll(),
+);
 renderAll();
+renderStage();
 renderToolbar();
 convert();

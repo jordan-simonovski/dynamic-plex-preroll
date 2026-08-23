@@ -123,3 +123,30 @@ function retargetLayout(oldKey, newKey) {
 // form's shape (declared with data-rerender="<hook>").
 const actions = {};
 const rerenderHooks = {};
+
+// ---- what the stage is looking at ------------------------------------------
+// currentScene and currentLayout are the two lookups every view needs, and
+// both must tolerate a selection that has gone stale (a deleted scene, a
+// renamed layout) by returning null rather than throwing mid-render.
+function currentScene() {
+  return state.scenes[selection.sceneIndex] || null;
+}
+// A clips scene draws no layout of its own; its label layout is what the stage
+// previews, since that is the only thing the user positions.
+function currentLayoutName() {
+  const sc = currentScene();
+  if (!sc) return "";
+  return (sc.kind === "clips" ? sc.label : sc.layout) || "";
+}
+function currentLayout() {
+  return state.layouts[currentLayoutName()] || null;
+}
+
+// The manifest's pixel space, which is what geometry.js and the stage draw in.
+// A half-typed resolution must not collapse the stage; 1920x1080 is the DSL's
+// own default and the only sane thing to draw against.
+function manifestDimensions() {
+  const m = /^\s*(\d+)\s*x\s*(\d+)\s*$/i.exec(String(state.resolution || ""));
+  if (!m) return { width: 1920, height: 1080 };
+  return { width: parseInt(m[1], 10) || 1920, height: parseInt(m[2], 10) || 1080 };
+}

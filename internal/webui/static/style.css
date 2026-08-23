@@ -33,17 +33,6 @@ body {
 #status { color: var(--muted); font-size: 13px; }
 #status.error { color: var(--danger); }
 
-.split {
-  display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(360px, 560px);
-  gap: 20px;
-  padding: 20px;
-  max-width: 1500px;
-  margin: 0 auto;
-  align-items: start;
-}
-@media (max-width: 980px) { .split { grid-template-columns: 1fr; } }
-
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -111,7 +100,6 @@ input[type="checkbox"] { width: auto; }
 .muted { color: var(--muted); font-size: 12px; margin: 4px 0 10px; }
 .empty { color: var(--muted); font-style: italic; }
 
-.preview { position: sticky; top: 72px; }
 .preview-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .preview-head h2 { margin: 0; font-size: 13px; font-family: var(--mono); color: var(--muted); }
 .errors { list-style: none; margin: 0 0 8px; padding: 0; }
@@ -131,3 +119,57 @@ input[type="checkbox"] { width: auto; }
   min-height: 300px; max-height: calc(100vh - 190px); overflow-y: auto;
   white-space: pre;
 }
+
+/* ---- phase 2: rail / stage / inspector ---------------------------------- */
+.topbar .spacer { flex: 1; }
+
+.studio {
+  display: grid;
+  grid-template-columns: 190px minmax(420px, 1fr) 340px;
+  gap: 16px;
+  padding: 16px 20px;
+  max-width: 1800px;
+  margin: 0 auto;
+  align-items: start;
+}
+@media (max-width: 1100px) { .studio { grid-template-columns: 1fr; } }
+
+.rail, .inspector {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+.rail h2, .inspector h2 {
+  margin: 0 0 6px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .6px; color: var(--muted);
+}
+
+.stage-pane { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.stage-bar { display: flex; align-items: center; gap: 12px; }
+.stage-bar .spacer { flex: 1; }
+.stage-bar .check { margin: 0; white-space: nowrap; }
+.stage-frame {
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  line-height: 0;
+}
+#stage { display: block; width: 100%; touch-action: none; }
+#stage-note, #stage-label { margin: 0; min-height: 18px; }
+
+/* The YAML pane is a drawer now: opened from the topbar, closed by default.
+   Validation errors stay on the stage pane instead, where they cannot be
+   hidden behind a toggle. */
+.drawer {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px 20px 20px;
+}
+.drawer #yaml { max-height: 60vh; }
+
+/* The phase-1 cards live below the studio while they are being retired. */
+.editor { padding: 0 20px 24px; max-width: 1500px; margin: 0 auto; }
