@@ -27,6 +27,15 @@ func main() {
 		ManifestDir: *dir,
 		MediaDirs:   splitDirs(*media),
 	}
+	// Plex is optional: without it the editor shows placeholder data and the
+	// UI says so. A missing token must never stop the editor from starting.
+	if plex, err := webui.NewPlexSource(); err != nil {
+		srv.PlexError = err.Error()
+		log.Printf("plex data previews disabled: %v", err)
+	} else {
+		srv.Plex = plex
+		log.Printf("plex data previews enabled (%s)", plex.BaseURL)
+	}
 	log.Printf("pre-roll config UI listening on %s (manifests in %s)", *addr, *dir)
 	log.Fatal(http.ListenAndServe(*addr, srv.Handler()))
 }

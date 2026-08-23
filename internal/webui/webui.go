@@ -52,6 +52,12 @@ type Server struct {
 	// manifest paths (media/common/Font.ttf) resolve the same way they do for a
 	// batch run. Empty means the UI process's own directory.
 	WorkDir string
+	// Plex is the optional live connection used for data previews and the
+	// image proxy. Nil means the editor runs on placeholder data.
+	Plex *PlexSource
+	// PlexError explains why Plex is off, surfaced through /api/capabilities so
+	// the UI can say "PLEX_TOKEN unset" rather than silently faking everything.
+	PlexError string
 }
 
 // Handler returns the full route table: the JSON API under /api and the
@@ -66,6 +72,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/manifests/{name}", s.get)
 	mux.HandleFunc("PUT /api/manifests/{name}", s.save)
 	mux.HandleFunc("DELETE /api/manifests/{name}", s.remove)
+	mux.HandleFunc("POST /api/data/resolve", s.resolve)
+	mux.HandleFunc("GET /api/plex/image", s.image)
 	staticRoot, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic(err) // embedded tree is fixed at compile time

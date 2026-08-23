@@ -35,5 +35,9 @@ func (s *Server) capabilitySet() capabilities {
 			break
 		}
 	}
+	caps.Plex = s.Plex != nil && s.Plex.Registry != nil
+	if !caps.Plex {
+		caps.PlexError = s.PlexError
+	}
 	return caps
 }
