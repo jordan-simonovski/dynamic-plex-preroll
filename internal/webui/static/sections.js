@@ -108,100 +108,6 @@ rerenderHooks["provider"] = (dataset) => {
   ds.params = defaultParams(ds.provider);
 };
 
-function renderLayouts() {
-  const cards = Object.entries(state.layouts).map(([name, l]) => layoutCard(name, l)).join("");
-  $("#section-layouts").innerHTML = `
-    <h2>Layouts</h2>
-    <p class="muted">Reusable rendered frames: a background plus text and list elements. Render scenes draw one; clip scenes can overlay one as a per-item label.</p>
-    ${cards || `<p class="empty">No layouts yet.</p>`}
-    <button class="btn" data-action="add-layout">+ Add layout</button>`;
-}
-
-function layoutCard(name, l) {
-  const base = `layouts.${name}`;
-  const els = (l.elements || []).map((el, i) => elementCard(name, el, i)).join("");
-  return `<div class="subcard">
-    <div class="subcard-head">
-      <input type="text" class="name-input" data-rename="layouts" data-old="${esc(name)}" value="${esc(name)}">
-      <button class="btn ghost danger" data-action="remove-layout" data-name="${esc(name)}">Remove</button>
-    </div>
-    <div class="grid2">
-      ${field("Font file", textInput(`${base}.font`, l.font, { placeholder: "media/common/MyFont.ttf" }))}
-      ${field("Background color", textInput(`${base}.background.color`, l.background?.color, { placeholder: "black, #101010, none" }),
-        `Use "none" for transparent — required for clip labels and scenes with a dynamic background`)}
-      ${field("Background image", textInput(`${base}.background.image`, l.background?.image, { placeholder: "media/common/bg.png" }),
-        "Wins over color when set")}
-    </div>
-    <h3>Elements</h3>
-    ${els || `<p class="empty">No elements — a layout needs at least one.</p>`}
-    <button class="btn ghost" data-action="add-element" data-layout="${esc(name)}" data-kind="text">+ Text</button>
-    <button class="btn ghost" data-action="add-element" data-layout="${esc(name)}" data-kind="list">+ List</button>
-  </div>`;
-}
-
-function templateChips(items) {
-  return `<div class="chips">${items.map((c) => `<code>${esc(c)}</code>`).join("")}</div>`;
-}
-
-function elementCard(layoutName, el, i) {
-  const base = `layouts.${layoutName}.elements.${i}`;
-  const head = `<div class="subcard-head">
-    <strong>${esc(el.type)}</strong><span class="spacer"></span>
-    <button class="btn ghost danger" data-action="remove-element" data-layout="${esc(layoutName)}" data-index="${i}">×</button>
-  </div>`;
-  if (el.type === "list") {
-    return `<div class="subcard">${head}
-      <div class="grid2">
-        ${field("Data source", select(`${base}.source`, el.source, Object.keys(state.data)), "Which feed this list iterates")}
-        ${field("Item template", textInput(`${base}.item`, el.item, { placeholder: "{{ .Rank }}. {{ .Name }}" }))}
-        ${field("X", numInput(`${base}.x`, el.x))}
-        ${field("First row Y", numInput(`${base}.startY`, el.startY))}
-        ${field("Row spacing", numInput(`${base}.stepY`, el.stepY))}
-        ${field("Font size", numInput(`${base}.size`, el.size))}
-        ${field("Color", textInput(`${base}.color`, el.color, { placeholder: "white" }))}
-        ${field("Align", select(`${base}.align`, el.align ?? "", ["", "left", "center", "right"], { emptyLabel: "left (default)" }))}
-      </div>
-      ${templateChips([...ITEM_FIELDS, ...TEMPLATE_FUNCS.map((f) => `{{ ${f} ... }}`)])}
-    </div>`;
-  }
-  return `<div class="subcard">${head}
-    <div class="grid2">
-      ${field("Text", `<textarea data-path="${esc(base)}.text">${esc(el.text)}</textarea>`,
-        "Newlines stack; templates like {{ upper .Period }} work here")}
-      ${field("Color", textInput(`${base}.color`, el.color, { placeholder: "white" }))}
-      ${field("X", numInput(`${base}.x`, el.x))}
-      ${field("Y", numInput(`${base}.y`, el.y))}
-      ${field("Font size", numInput(`${base}.size`, el.size))}
-      ${field("Align", select(`${base}.align`, el.align ?? "", ["", "left", "center", "right"], { emptyLabel: "left (default)" }))}
-      ${field("Line height", numInput(`${base}.lineHeight`, el.lineHeight ?? 0), "0 = single line")}
-    </div>
-    ${templateChips(TEMPLATE_VARS)}
-  </div>`;
-}
-
-actions["add-layout"] = () => {
-  const name = uniqueKey(state.layouts, "layout");
-  state.layouts[name] = {
-    background: { color: "black", image: "" },
-    font: "",
-    elements: [{ type: "text", text: "Title", x: 96, y: 150, size: 96, color: "white" }],
-  };
-  renderAll();
-};
-actions["remove-layout"] = (d) => { delete state.layouts[d.name]; renderAll(); };
-actions["add-element"] = (d) => {
-  const els = state.layouts[d.layout].elements;
-  els.push(d.kind === "list"
-    ? { type: "list", source: Object.keys(state.data)[0] || "", item: "{{ .Rank }}. {{ .Name }}",
-        x: 96, startY: 320, stepY: 96, size: 56, color: "white" }
-    : { type: "text", text: "Text", x: 96, y: 150, size: 64, color: "white" });
-  renderLayouts();
-};
-actions["remove-element"] = (d) => {
-  state.layouts[d.layout].elements.splice(+d.index, 1);
-  renderLayouts();
-};
-
 function renderScenes() {
   const cards = state.scenes.map((sc, i) => sceneCard(sc, i)).join("");
   $("#section-scenes").innerHTML = `
@@ -239,14 +145,14 @@ function sceneFields(sc, i, base) {
       ${field("Data source", select(`${base}.source`, sc.source, Object.keys(state.data)),
         "Items need trailer/media URLs — e.g. plex.trailers, or trailers: true")}
       ${field("Seconds per clip", numInput(`${base}.perClip`, sc.perClip, { min: 0 }))}
-      ${field("Label layout", select(`${base}.label`, sc.label ?? "", ["", ...Object.keys(state.layouts)], { emptyLabel: "(no label)" }),
+      ${field("Label layout", select(`${base}.label`, sc.label ?? "", ["", ...Object.keys(state.layouts)], { emptyLabel: "(no label)", rerender: "scene-layout" }),
         "Overlaid per clip with that item's Name/Rank in scope — use a transparent background")}
     </div>`;
   }
   // render
   const bg = sc.background;
   return `<div class="grid2">
-      ${field("Layout", select(`${base}.layout`, sc.layout, Object.keys(state.layouts)))}
+      ${field("Layout", select(`${base}.layout`, sc.layout, Object.keys(state.layouts), { rerender: "scene-layout" }))}
       ${field("Duration (s)", numInput(`${base}.duration`, sc.duration, { min: 0 }))}
     </div>
     ${varRows(sc, i, base)}
@@ -276,21 +182,25 @@ function varRows(sc, i, base) {
     <button class="btn ghost" data-action="add-var" data-index="${i}">+ Add variable</button>`;
 }
 
-actions["add-scene"] = (d) => { state.scenes.push(sceneDefaults(d.kind)); renderScenes(); };
-actions["remove-scene"] = (d) => { state.scenes.splice(+d.index, 1); renderScenes(); };
+// These all renderAll() rather than renderScenes(): the inspector shows the
+// same scene, and its template-variable rows are the ones being clicked when
+// the button lives there. Re-rendering only this card would leave the panel
+// showing a variable that is already gone (or missing one just added).
+actions["add-scene"] = (d) => { state.scenes.push(sceneDefaults(d.kind)); renderAll(); };
+actions["remove-scene"] = (d) => { state.scenes.splice(+d.index, 1); renderAll(); };
 actions["move-scene"] = (d) => {
   const i = +d.index, j = i + +d.dir;
   if (j < 0 || j >= state.scenes.length) return;
   [state.scenes[i], state.scenes[j]] = [state.scenes[j], state.scenes[i]];
-  renderScenes();
+  renderAll();
 };
 actions["add-var"] = (d) => {
   const sc = state.scenes[+d.index];
   sc.vars = sc.vars || {};
   sc.vars[uniqueKey(sc.vars, "Var")] = "";
-  renderScenes();
+  renderAll();
 };
-actions["remove-var"] = (d) => { delete state.scenes[+d.index].vars[d.key]; renderScenes(); };
+actions["remove-var"] = (d) => { delete state.scenes[+d.index].vars[d.key]; renderAll(); };
 
 // Changing kind swaps the scene for that kind's defaults — stale fields from
 // the old kind (file on a render scene, layout on clips) must not linger. That
@@ -314,6 +224,6 @@ function renderAll() {
   renderGeneral();
   renderAudio();
   renderData();
-  renderLayouts();
   renderScenes();
+  renderInspector();
 }

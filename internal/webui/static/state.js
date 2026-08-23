@@ -1,8 +1,14 @@
 "use strict";
 // state.js — the manifest as a mutable plain object shaped exactly like the
 // DSL's JSON form, plus the operations that keep it internally consistent
-// (renames retarget every reference). This file knows the DSL; it knows
-// nothing about how any of it is drawn.
+// (renames retarget every reference), plus `selection` and the two EMPTY
+// view-wiring registries (`actions`, `rerenderHooks`).
+//
+// It knows the DSL and it never draws, but it is not innocent of the views:
+// the registries below exist for view files to fill in, and they live here
+// only because every view file loads after state.js and before app.js, which
+// is what dispatches through them. Naming that here rather than claiming this
+// file "knows nothing about how any of it is drawn", which it no longer does.
 
 function emptyManifest() {
   return {

@@ -131,6 +131,8 @@ vm.runInContext(`globalThis.__t = {
   select: (i) => { selection.sceneIndex = i; },
   Geometry,
   stageDataReason: () => stageDataReason,
+  selectElement: (i) => { selection.element = i; },
+  selectedElement: () => selection.element,
 };`, ctx);
 
 // ---- assertions ------------------------------------------------------------
@@ -420,6 +422,79 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
   check("draw: note discloses the missing font and the placeholder data",
     document.querySelector("#stage-note").textContent.includes("no font set"),
     document.querySelector("#stage-note").textContent);
+}
+
+// ---- selection: the boxes and the outline ----------------------------------
+// stageBoxes() is what Task 9's drag and the inspector's hit-testing index
+// into, so it must BE geometry.js's output for the same lines — not a second
+// measurement that can drift from the one that was drawn.
+{
+  __t.setState({
+    resolution: "1920x1080",
+    data: { top: {} },
+    layouts: {
+      main: {
+        font: "",
+        background: { color: "#101010", image: "" },
+        elements: [
+          { type: "text", x: 100, y: 200, size: 60, color: "white", text: "Hello\nWorld" },
+          { type: "list", source: "top", x: 100, startY: 400, stepY: 70, size: 40, color: "#ff0000", align: "center", item: "{{ .Name }}" },
+        ],
+      },
+    },
+    scenes: [{ kind: "render", layout: "main", duration: 6 }],
+  });
+  __t.select(0);
+  __t.selectElement(null);
+  draw();
+
+  const scene = currentScene();
+  const els = currentLayout().elements;
+  const want = els.map((el) => Geometry.elementBox(el, stageLines(el, scene), stageMeasure(stageCtx, el.size)));
+  eq("boxes: one per element in draw order", ctx.stageBoxes().length, 2);
+  eq("boxes: come from geometry.js", JSON.stringify(ctx.stageBoxes()), JSON.stringify(want));
+  // The text element is two centred lines; the list is five right-of-x rows.
+  check("boxes: the text box spans both lines",
+    ctx.stageBoxes()[0].h > Geometry.lineHeight(els[0]), JSON.stringify(ctx.stageBoxes()[0]));
+
+  // Nothing selected: no outline at all.
+  const none = draw();
+  eq("selection: no outline when nothing is selected",
+    none.filter((c) => c.op === "strokeRect" && c.stroke === "#e5a00d").length, 0);
+
+  // The outline is the element's own box, and the handle is geometry.js's.
+  __t.selectElement(1);
+  const calls = draw();
+  const outline = calls.filter((c) => c.op === "strokeRect" && c.stroke === "#e5a00d");
+  eq("selection: one outline for the selected element", outline.length, 1);
+  const box = ctx.stageBoxes()[1];
+  eq("selection: the outline is the element's box",
+    JSON.stringify(outline[0].args), JSON.stringify([box.x, box.y, box.w, box.h]));
+  // 1920 manifest px across a 960px-wide frame: chrome is scaled x2 so it is a
+  // constant thickness on screen.
+  eq("selection: stroke scaled to screen px", stageCtx.lineWidth, 3);
+  const h = Geometry.handlePoint(box);
+  const handle = calls.filter((c) => c.op === "fillRect" && c.fill === "#e5a00d");
+  eq("selection: one handle", handle.length, 1);
+  eq("selection: the handle is at geometry.js's handle point",
+    JSON.stringify(handle[0].args), JSON.stringify([h.x - 10, h.y - 10, 20, 20]));
+
+  // A stale index (an element removed since the last draw) must not throw or
+  // outline the wrong thing.
+  __t.selectElement(9);
+  const stale = draw();
+  eq("selection: a stale index draws no outline",
+    stale.filter((c) => c.op === "strokeRect" && c.stroke === "#e5a00d").length, 0);
+  __t.selectElement(null);
+}
+
+// A layout-less scene must clear the cache, or the last layout's boxes stay
+// hit-testable over a frame that no longer draws them.
+{
+  __t.setState({ layouts: {}, scenes: [{ kind: "image", file: "x.png" }] });
+  __t.select(0);
+  draw();
+  eq("boxes: a scene with no layout has none", ctx.stageBoxes().length, 0);
 }
 
 // A transparent layout background leaves the checkerboard showing, which is

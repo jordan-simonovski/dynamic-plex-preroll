@@ -173,3 +173,20 @@ input[type="checkbox"] { width: auto; }
 
 /* The phase-1 cards live below the studio while they are being retired. */
 .editor { padding: 0 20px 24px; max-width: 1500px; margin: 0 auto; }
+
+/* ---- phase 2: the contextual inspector ---------------------------------- */
+.inspector h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--accent); }
+.inspector h3 { margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.inspector .stack { display: flex; flex-direction: column; gap: 8px; }
+.inspector details { margin-top: 14px; }
+.inspector summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+
+.element-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.element-row {
+  display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; color: var(--text); font: inherit; cursor: pointer;
+}
+.element-row.selected { border-color: var(--accent); }
+.element-row .kind { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.element-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

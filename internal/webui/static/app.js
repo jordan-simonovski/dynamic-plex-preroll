@@ -135,7 +135,20 @@ async function deleteManifest() {
 }
 
 // ---- delegated events ------------------------------------------------------
-$("#editor").addEventListener("input", (e) => {
+// One data-path can now be bound by more than one control at once — the
+// inspector's "Pre-roll settings" and the General card show the same fields,
+// and Task 12's colour swatch will sit beside its own hex box. Typing does not
+// re-render the form (that would steal focus mid-word), so push the new value
+// to the other controls by hand or they keep showing the old one. Matching in
+// JS rather than through a [data-path="..."] selector: a path can contain a
+// quote (layout and data-source names are free text) and would break it.
+function syncPath(path, source) {
+  for (const other of document.querySelectorAll("[data-path]")) {
+    if (other !== source && other.dataset.path === path) other.value = String(getPath(state, path) ?? "");
+  }
+}
+
+function onEditorInput(e) {
   const path = e.target.dataset.path;
   if (!path) return;
   if (path === "name") {
@@ -144,27 +157,27 @@ $("#editor").addEventListener("input", (e) => {
     setPath(state, path, coerce(e.target));
     if (wasAuto) {
       state.output = deriveOutput(state.name);
-      const out = $('#section-general input[data-path="output"]');
-      if (out) out.value = state.output;
+      syncPath("output");
     }
   } else {
     setPath(state, path, coerce(e.target));
   }
+  syncPath(path, e.target);
   // Only a data-source edit can change what the providers return; anything
   // else just redraws.
   if (path.startsWith("data.")) refreshStageData();
   renderStage();
   scheduleConvert();
-});
+}
 
-$("#editor").addEventListener("change", (e) => {
+function onEditorChange(e) {
   const t = e.target;
   if (t.dataset.actionToggle === "scene-bg") {
     const sc = state.scenes[+t.dataset.index];
     sc.background = t.checked
       ? { source: Object.keys(state.data)[0] || "", mode: "art", tile: "", dim: 0.35, limit: 0 }
       : null;
-    renderScenes();
+    renderAll();
     renderStage();
     scheduleConvert();
     return;
@@ -179,15 +192,30 @@ $("#editor").addEventListener("change", (e) => {
     renderStage();
     scheduleConvert();
   }
-});
+}
 
-$("#editor").addEventListener("click", (e) => {
+function onEditorClick(e) {
   const btn = e.target.closest("[data-action]");
   if (!btn) return;
   actions[btn.dataset.action]?.(btn.dataset);
   renderStage();
   scheduleConvert();
-});
+}
+
+// The inspector uses the same data-path/data-action conventions as the phase-1
+// form, so it gets the same three delegated listeners rather than its own.
+for (const root of ["#editor", "#inspector"]) {
+  const el = $(root);
+  el.addEventListener("input", onEditorInput);
+  el.addEventListener("change", onEditorChange);
+  el.addEventListener("click", onEditorClick);
+}
+
+// Clicking the stage selects the topmost element under the pointer, or the
+// scene when the click lands on empty canvas. Task 11 adds the keyboard
+// equivalents; the inspector's element rows are already keyboard-reachable, so
+// no property is behind this click alone.
+$("#stage").addEventListener("click", (e) => selectAt(e.clientX, e.clientY));
 
 $("#copy-yaml").onclick = async () => {
   await navigator.clipboard.writeText($("#yaml code").textContent);

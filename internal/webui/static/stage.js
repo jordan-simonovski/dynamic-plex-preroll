@@ -225,7 +225,11 @@ function stageCanvasSize(frameWidth, dims, dpr) {
   const pixelWidth = Math.max(1, Math.round(cssWidth * ratio));
   const scale = pixelWidth / width;
   const pixelHeight = Math.max(1, Math.round(height * scale));
-  return { cssWidth, cssHeight: pixelHeight / ratio, pixelWidth, pixelHeight, scale };
+  // manifestPerCSS converts a screen thickness into the manifest pixels the
+  // transformed context draws in, so chrome drawn over the frame (the
+  // selection outline, its handle) is a constant size on screen whatever the
+  // manifest resolution. It belongs here with the rest of the scaling model.
+  return { cssWidth, cssHeight: pixelHeight / ratio, pixelWidth, pixelHeight, scale, manifestPerCSS: width / cssWidth };
 }
 
 // ---- draw ------------------------------------------------------------------
@@ -249,6 +253,7 @@ function renderStage() {
   const scene = currentScene();
   const layout = currentLayout();
   drawScene(ctx, scene, layout, dims.width, dims.height);
+  drawSelection(ctx, size.manifestPerCSS);
   if ($("#toggle-safe")?.checked) drawSafeArea(ctx, dims.width, dims.height);
 
   updateStageChrome(scene, layout);
@@ -258,9 +263,13 @@ function renderStage() {
 // drawn over it in array order, so the last element in the list is on top.
 function drawScene(ctx, scene, layout, width, height) {
   drawBackground(ctx, scene, layout, width, height);
+  stageBoxCache = [];
   if (!layout) return;
   const family = stageFontFamily(layout.font);
-  for (const el of layout.elements || []) drawElement(ctx, el, scene, family);
+  for (const el of layout.elements || []) {
+    drawElement(ctx, el, scene, family);
+    stageBoxCache.push(measureElement(ctx, el, scene, family));
+  }
 }
 
 // render.go: a scene background REPLACES the layout's own background — Layout()
@@ -452,6 +461,51 @@ function drawSafeArea(ctx, width, height) {
   ctx.lineWidth = 2;
   ctx.strokeRect(s.x, s.y, s.w, s.h);
   ctx.restore();
+}
+
+// ---- selection -------------------------------------------------------------
+// stageBoxCache is the selection/hit rectangle of every element in the current
+// layout, in draw order, recomputed on every render. It is cached rather than
+// derived on demand because measuring text needs the canvas context with the
+// right font already set — cheap during the draw, awkward afterwards.
+let stageBoxCache = [];
+function stageBoxes() { return stageBoxCache; }
+
+function measureElement(ctx, el, scene, family) {
+  // ctx state is whatever drawElement left: same font, same alignment. Setting
+  // it again keeps measureElement correct if it is ever called out of order.
+  ctx.font = stageFontSpec(el.size || 0, family);
+  return Geometry.elementBox(el, stageLines(el, scene), stageMeasure(ctx, el.size || 0));
+}
+
+// drawSelection outlines the selected element and draws its single resize
+// handle. Stroke widths are multiplied by manifestPerCSS so the outline is a
+// constant thickness on screen whatever the manifest resolution.
+function drawSelection(ctx, px) {
+  if (selection.element == null) return;
+  const box = stageBoxCache[selection.element];
+  if (!box) return;
+  ctx.save();
+  ctx.strokeStyle = "#e5a00d";
+  ctx.lineWidth = 1.5 * px;
+  ctx.setLineDash([6 * px, 4 * px]);
+  ctx.strokeRect(box.x, box.y, box.w, box.h);
+  ctx.setLineDash([]);
+  const h = Geometry.handlePoint(box);
+  const s = 5 * px;
+  ctx.fillStyle = "#e5a00d";
+  ctx.fillRect(h.x - s, h.y - s, s * 2, s * 2);
+  ctx.restore();
+}
+
+// selectAt turns a click into a selection: the topmost element under the
+// pointer, or nothing (which selects the scene itself).
+function selectAt(clientX, clientY) {
+  const canvas = $("#stage");
+  const { width } = stageDimensions();
+  const p = Geometry.toManifest(clientX, clientY, canvas.getBoundingClientRect(), width);
+  const hit = Geometry.hitTest(stageBoxCache, p.x, p.y);
+  selectElement(hit === -1 ? null : hit);
 }
 
 // ---- chrome ----------------------------------------------------------------
