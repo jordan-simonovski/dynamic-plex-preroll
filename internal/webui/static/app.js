@@ -61,11 +61,15 @@ function numInput(path, value, opts = {}) {
 // was since deleted/renamed), inject it as an extra, labelled-missing option
 // so the select shows the real state instead of silently falling back to the
 // first option — which would corrupt state the moment the user touches it.
+// An empty value on a list with no "" option gets one prepended, so "nothing
+// chosen yet" renders as empty instead of the first option — the form must
+// never claim a choice the user didn't make.
 function select(path, value, options, opts = {}) {
   const missing = value !== "" && value != null && !options.includes(value);
-  const list = missing ? [...options, value] : options;
+  const empty = (value === "" || value == null) && !options.includes("");
+  const list = missing ? [...options, value] : (empty ? ["", ...options] : options);
   const body = list.map((o) =>
-    `<option value="${esc(o)}"${o === value ? " selected" : ""}>` +
+    `<option value="${esc(o)}"${o === value || (empty && o === "") ? " selected" : ""}>` +
     `${esc(o === "" ? (opts.emptyLabel ?? "(none)") : (missing && o === value ? `${o} (missing)` : o))}</option>`).join("");
   const rerender = opts.rerender ? ` data-rerender="${esc(opts.rerender)}"` : "";
   const extra = opts.attrs ?? "";
@@ -73,18 +77,28 @@ function select(path, value, options, opts = {}) {
 }
 
 // ---- key renames (data sources, layouts, param/var maps) -------------------
+// Presence, not truthiness: new keys are seeded with "", so a truthiness test
+// would hand out the same key twice and the second add would overwrite the
+// first in place.
 function uniqueKey(map, base) {
-  if (!map[base]) return base;
+  if (!Object.hasOwn(map, base)) return base;
   let i = 2;
-  while (map[`${base}${i}`]) i++;
+  while (Object.hasOwn(map, `${base}${i}`)) i++;
   return `${base}${i}`;
 }
 function renameKey(mapPath, oldKey, newKey) {
   const map = getPath(state, mapPath);
-  if (!newKey || newKey === oldKey || map[newKey] !== undefined) {
-    renderAll(); // reject: restore the old name in the input
+  // Dots are the separator in the data-path strings every input is addressed
+  // by, so a dotted key would make every later edit miss or land elsewhere.
+  const reject = !newKey ? "A name can't be empty"
+    : newKey.includes(".") ? "A name can't contain a dot"
+    : map[newKey] !== undefined ? `${newKey} is already taken` : "";
+  if (reject) {
+    renderAll(); // restore the old name in the input
+    flash(`${reject} — kept "${oldKey}"`, true);
     return;
   }
+  if (newKey === oldKey) return;
   const rebuilt = {};
   for (const [k, v] of Object.entries(map)) rebuilt[k === oldKey ? newKey : k] = v;
   setPath(state, mapPath, rebuilt);
@@ -117,7 +131,12 @@ function scheduleConvert() {
   clearTimeout(convertTimer);
   convertTimer = setTimeout(convert, 300);
 }
+// convert() is fired by the debounce and directly by New/Open/Delete, so two
+// requests can be in flight; only the newest may touch the DOM, or the pane
+// ends up showing an older state's YAML.
+let convertSeq = 0;
 async function convert() {
+  const seq = ++convertSeq;
   let out;
   try {
     const res = await fetch("/api/convert", {
@@ -129,6 +148,7 @@ async function convert() {
   } catch (err) {
     out = { yaml: "", errors: [`server unreachable: ${err.message}`] };
   }
+  if (seq !== convertSeq) return; // a newer convert() has already answered
   $("#yaml code").textContent = out.yaml || "";
   const list = $("#errors");
   list.innerHTML = "";
@@ -393,7 +413,7 @@ function sceneCard(sc, i) {
   const head = `<div class="subcard-head">
     <strong>#${i + 1}</strong>
     ${select(`${base}.kind`, sc.kind, ["image", "render", "clips"],
-      { rerender: "scene-kind", attrs: `data-index="${i}"` })}
+      { rerender: "scene-kind", attrs: `data-index="${i}" data-prev="${esc(sc.kind)}"` })}
     <span class="spacer"></span>
     <button class="btn ghost" data-action="move-scene" data-index="${i}" data-dir="-1">↑</button>
     <button class="btn ghost" data-action="move-scene" data-index="${i}" data-dir="1">↓</button>
@@ -468,10 +488,34 @@ actions["add-var"] = (d) => {
 actions["remove-var"] = (d) => { delete state.scenes[+d.index].vars[d.key]; renderScenes(); };
 
 // Changing kind swaps the scene for that kind's defaults — stale fields from
-// the old kind (file on a render scene, layout on clips) must not linger.
+// the old kind (file on a render scene, layout on clips) must not linger. That
+// throws away vars, background, label and layout, so ask first when the scene
+// holds anything beyond a fresh one's defaults; on "no", put the kind back
+// (the input handler wrote it before this hook ran) and let the re-render
+// restore the select.
 rerenderHooks["scene-kind"] = (dataset) => {
-  state.scenes[+dataset.index] = sceneDefaults(state.scenes[+dataset.index].kind);
+  const i = +dataset.index;
+  const sc = state.scenes[i];
+  const fresh = JSON.stringify({ ...sceneDefaults(dataset.prev), kind: sc.kind });
+  if (JSON.stringify(sc) !== fresh &&
+      !confirm(`Switch scene #${i + 1} from ${dataset.prev} to ${sc.kind}? Its current settings are cleared.`)) {
+    sc.kind = dataset.prev;
+    return;
+  }
+  state.scenes[i] = sceneDefaults(sc.kind);
 };
+
+// The file the editor is currently backed by, "" when it was never opened or
+// saved. Save targets this rather than a filename derived from state.name:
+// the two are allowed to differ (manifests/trailers-example.yaml declares
+// name: unwatched-trailers), and deriving would fork the file or clobber an
+// unrelated one.
+let openedFile = "";
+
+// No dirty tracking, so anything that replaces the editor's contents asks.
+function confirmDiscard() {
+  return confirm("Discard the current editor contents?");
+}
 
 async function renderToolbar() {
   let names = [];
@@ -486,10 +530,19 @@ async function renderToolbar() {
     <button class="btn ghost" id="btn-new">New</button>
     <button class="btn" id="btn-save">Save</button>
     <button class="btn ghost danger" id="btn-delete">Delete</button>`;
-  $("#manifest-picker").onchange = (e) => e.target.value && loadManifest(e.target.value);
+  $("#manifest-picker").value = openedFile;
+  $("#manifest-picker").onchange = (e) => {
+    if (!e.target.value) return;
+    if (!confirmDiscard()) {
+      e.target.value = openedFile; // back out: the picker keeps showing the open file
+      return;
+    }
+    loadManifest(e.target.value);
+  };
   $("#btn-new").onclick = () => {
-    if (!confirm("Discard the current editor contents?")) return;
+    if (!confirmDiscard()) return;
     state = emptyManifest();
+    openedFile = "";
     $("#manifest-picker").value = "";
     renderAll();
     convert();
@@ -516,35 +569,55 @@ function normalize(m) {
 }
 
 async function loadManifest(name) {
-  const res = await fetch(`/api/manifests/${encodeURIComponent(name)}`);
-  if (!res.ok) {
-    flash(`Could not load ${name}: ${await res.text()}`, true);
+  try {
+    const res = await fetch(`/api/manifests/${encodeURIComponent(name)}`);
+    if (!res.ok) {
+      flash(`Could not load ${name}: ${await res.text()}`, true);
+      return;
+    }
+    state = normalize(await res.json());
+  } catch (err) {
+    flash(`Could not load ${name}: ${err.message}`, true);
     return;
   }
-  state = normalize(await res.json());
+  openedFile = name;
   renderAll();
   convert();
   flash(`Loaded ${name}`);
 }
 
 async function saveManifest() {
-  if (!state.name) {
+  const derived = state.name ? `${state.name}.yaml` : "";
+  const filename = openedFile || derived;
+  if (!filename) {
     flash("Give the pre-roll a name before saving", true);
     return;
   }
-  const filename = `${state.name}.yaml`;
-  const res = await fetch(`/api/manifests/${encodeURIComponent(filename)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(state),
-  });
-  if (!res.ok) {
-    flash(`Not saved: ${await res.text()}`, true);
+  const known = [...$("#manifest-picker").options].map((o) => o.value);
+  // Two ways a save can surprise: it writes a file whose name no longer
+  // matches the manifest's, or it lands on someone else's manifest.
+  if (openedFile && derived && derived !== openedFile) {
+    if (!confirm(`This manifest is named "${state.name}" (${derived}) but was opened as ${openedFile}. Save over ${openedFile}?`)) return;
+  } else if (!openedFile && known.includes(filename)) {
+    if (!confirm(`${filename} already exists in the manifest directory. Overwrite it?`)) return;
+  }
+  try {
+    const res = await fetch(`/api/manifests/${encodeURIComponent(filename)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    });
+    if (!res.ok) {
+      flash(`Not saved: ${await res.text()}`, true);
+      return;
+    }
+  } catch (err) {
+    flash(`Not saved: ${err.message}`, true);
     return;
   }
+  openedFile = filename;
   flash(`Saved ${filename}`);
   await renderToolbar();
-  $("#manifest-picker").value = filename;
 }
 
 async function deleteManifest() {
@@ -554,13 +627,19 @@ async function deleteManifest() {
     return;
   }
   if (!confirm(`Delete ${name}? The file is removed from the manifest directory.`)) return;
-  const res = await fetch(`/api/manifests/${encodeURIComponent(name)}`, { method: "DELETE" });
-  if (!res.ok) {
-    flash(`Not deleted: ${await res.text()}`, true);
+  try {
+    const res = await fetch(`/api/manifests/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) {
+      flash(`Not deleted: ${await res.text()}`, true);
+      return;
+    }
+  } catch (err) {
+    flash(`Not deleted: ${err.message}`, true);
     return;
   }
   flash(`Deleted ${name}`);
   state = emptyManifest();
+  openedFile = "";
   renderAll();
   convert();
   renderToolbar();
