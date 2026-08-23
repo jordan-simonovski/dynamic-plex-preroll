@@ -173,7 +173,7 @@ const { __t, __spy, stageTemplate, stageLines, stageVars, stageCanvasSize, stage
   safeColor, stageNotes, stageLabelText, setStageData, renderStage, stageMeasure,
   manifestDimensions, currentScene, currentLayout, currentLayoutName,
   refreshStageDataNow, stageItems, stagePlaceholderSources,
-  stageKeyAction, stageKeyNav, stageDescription } = ctx;
+  stageKeyAction, stageKeyNav, stageLabel, stageSelectionText } = ctx;
 const Geometry = ctx.__t.Geometry;
 // The first placeholder item's name, so the "this fell back" assertions do
 // not hardcode a string stage.js owns.
@@ -451,6 +451,29 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
   check("draw: note discloses the missing font and the placeholder data",
     document.querySelector("#stage-note").textContent.includes("no font set"),
     document.querySelector("#stage-note").textContent);
+}
+
+// `color: none` is the one approximation the canvas cannot show: safeColor
+// falls back to the default text colour, so it looks like ordinary white text
+// while ImageMagick fills it with zero alpha and draws nothing. The note has
+// to say so, or the preview is confidently wrong.
+{
+  __t.setState({
+    resolution: "1920x1080",
+    layouts: { main: { font: "", background: { color: "black" }, elements: [
+      { type: "text", x: 10, y: 20, size: 40, color: "none", text: "Invisible" },
+      { type: "text", x: 10, y: 80, size: 40, color: "white", text: "Visible" },
+    ] } },
+    scenes: [{ kind: "render", layout: "main", duration: 5 }],
+  });
+  __t.select(0);
+  __t.selectElement(null);
+  renderStage();
+  const note = document.querySelector("#stage-note").textContent;
+  check("draw: a transparent element colour is disclosed, not silently faked",
+    note.includes("draws nothing at all") && note.includes("element 1 (text)"), note);
+  check("draw: an opaque element is not named in that note",
+    !note.includes("element 2"), note);
 }
 
 // ---- selection: the boxes and the outline ----------------------------------
@@ -754,10 +777,15 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
     stageKeyAction(key("a"), 0, 3), null);
 }
 
-// ---- Task 11: stageDescription — what a screen reader is told -------------
+// ---- what a screen reader is told: a STABLE name + a live region ----------
+// The split is the whole point. stageLabel is the canvas's accessible name and
+// must not move when the selection does — a name that changes under focus is
+// re-announced in full by NVDA/JAWS, which turned a 10-press nudge into ten
+// re-reads of the scene. The moving detail belongs to stageSelectionText,
+// which #stage-live announces politely.
 {
   __t.setState({ scenes: [] });
-  eq("description: no scenes at all", stageDescription(), "Scene preview: no scenes yet");
+  eq("label: no scenes at all", stageLabel(), "Scene preview: no scenes yet");
 
   __t.setState({
     layouts: { main: { font: "", elements: [
@@ -768,21 +796,24 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
   });
   __t.select(0);
   __t.selectElement(null);
-  eq("description: scene + kind + element count, nothing selected",
-    stageDescription(), "Scene 1 of 2, kind render. 2 elements");
+  eq("label: scene + kind + element count",
+    stageLabel(), "Scene preview: scene 1 of 2, kind render, 2 elements");
+  eq("live: nothing selected says nothing", stageSelectionText(), "");
 
   __t.selectElement(0);
-  eq("description: a selected text element names its anchor and size",
-    stageDescription(), "Scene 1 of 2, kind render. 2 elements. selected: text element at x 100, y 200, size 60");
+  eq("label: selecting an element does NOT change the accessible name",
+    stageLabel(), "Scene preview: scene 1 of 2, kind render, 2 elements");
+  eq("live: a selected text element names its anchor and size",
+    stageSelectionText(), "text element at x 100, y 200, size 60");
 
   __t.selectElement(1);
-  eq("description: a selected list element names its FIRST ROW, not y",
-    stageDescription(), "Scene 1 of 2, kind render. 2 elements. selected: list element at x 10, first row 20, size 30");
+  eq("live: a selected list element names its FIRST ROW, not y",
+    stageSelectionText(), "list element at x 10, first row 20, size 30");
 
   __t.select(1);
   __t.selectElement(null);
-  eq("description: an image scene has no layout to count elements in",
-    stageDescription(), "Scene 2 of 2, kind image");
+  eq("label: an image scene has no layout to count elements in",
+    stageLabel(), "Scene preview: scene 2 of 2, kind image");
   __t.select(0);
 }
 
@@ -847,8 +878,21 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
 
   renderStage();
   const label = document.querySelector("#stage").attrs["aria-label"];
-  check("nav: renderStage keeps the aria-label in sync with stageDescription()",
-    label === stageDescription(), label);
+  check("nav: renderStage sets the aria-label from stageLabel()",
+    label === stageLabel(), label);
+
+  // The regression this whole split exists to prevent: nudging must not
+  // rename the focused canvas.
+  __t.selectElement(0);
+  renderStage();
+  const before = document.querySelector("#stage").attrs["aria-label"];
+  kd("ArrowRight");
+  kd("ArrowRight");
+  renderStage();
+  eq("nav: a nudge leaves the accessible name alone",
+    document.querySelector("#stage").attrs["aria-label"], before);
+  check("nav: ...and the moving detail is what changed instead",
+    stageSelectionText().includes(`x ${currentLayout().elements[0].x}`), stageSelectionText());
 }
 
 // refreshStageDataNow is the actual Task 7 data wiring: no data sources means
