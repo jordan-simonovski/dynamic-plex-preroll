@@ -78,7 +78,7 @@ vm.runInContext(`globalThis.__t = {
 };`, ctx);
 
 const { __t, renderTimeline, sceneDuration, timelineHeight, moveScene,
-  renderInspector, renderStage, currentLayout } = ctx;
+  renderInspector, renderStage, currentLayout, railReorderTarget } = ctx;
 const { actions } = ctx.__t;
 const rail = () => document.querySelector("#rail").innerHTML;
 const panel = () => document.querySelector("#inspector").innerHTML;
@@ -210,6 +210,24 @@ const DOUBLE_FEATURE = () => ({
     __t.getSelection().sceneIndex, 2);
   eq("move: ...and the selection still names the same scene ('b')",
     __t.getState().scenes[__t.getSelection().sceneIndex].id, "b");
+}
+
+// ---- Task 11 fix for a Task 8 regression: keyboard scene reordering -------
+// The retired Scenes card had per-row up/down buttons; the rail that replaced
+// it only reorders via HTML5 drag-and-drop (dragstart/drop), which needs a
+// pointer. railReorderTarget is the pure decision (no DOM) that
+// sceneCardKeyDown applies via moveScene() — driven directly here with plain
+// {key, altKey} shapes, the same way stage.js's stageKeyAction is tested.
+{
+  eq("reorder: a bare arrow (no Alt) claims nothing — Tab still reaches every card",
+    railReorderTarget(1, "ArrowUp", false, 3), null);
+  eq("reorder: Alt+Up moves one earlier", railReorderTarget(1, "ArrowUp", true, 3), 0);
+  eq("reorder: Alt+Up on the first card is a no-op", railReorderTarget(0, "ArrowUp", true, 3), null);
+  eq("reorder: Alt+Down moves one later", railReorderTarget(0, "ArrowDown", true, 3), 1);
+  eq("reorder: Alt+Down on the last card is a no-op", railReorderTarget(2, "ArrowDown", true, 3), null);
+  eq("reorder: an unrelated key claims nothing", railReorderTarget(1, "Enter", true, 3), null);
+  eq("reorder: a single-scene rail has nowhere to move to either way",
+    railReorderTarget(0, "ArrowDown", true, 1), null);
 }
 
 // ---- CRITICAL FIX #1: selecting a scene here is what the inspector's ------

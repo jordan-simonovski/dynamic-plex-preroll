@@ -138,7 +138,14 @@ for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state
 // shared script scope rather than on the global object; this bridge reaches them.
 // Geometry is a top-level `const`, so it lives in that same script scope and
 // is not reachable as a property of the context either.
-vm.runInContext(`globalThis.__t = {
+// stageKeyNav (Task 11) calls renderInspector/onStateChange/scheduleConvert,
+// none of which this file loads inspector.js/app.js for — they are stubbed
+// as counters, same pattern interact_test.js uses, so what is asserted here
+// is stageKeyNav's OWN sequencing, not inspector.js's rendering.
+vm.runInContext(`globalThis.__spy = { inspector: 0, converts: 0 };
+globalThis.renderInspector = () => { __spy.inspector++; };
+globalThis.scheduleConvert = () => { __spy.converts++; };
+globalThis.__t = {
   setState: (s) => { state = normalize(s); },
   select: (i) => { selection.sceneIndex = i; },
   Geometry,
@@ -146,6 +153,7 @@ vm.runInContext(`globalThis.__t = {
   selectElement: (i) => { selection.element = i; },
   selectedElement: () => selection.element,
   placeholderName: () => PLACEHOLDER_ITEMS[0].name,
+  setDrag: (v) => { stageDrag = v; },
 };`, ctx);
 
 // ---- assertions ------------------------------------------------------------
@@ -156,11 +164,14 @@ function check(name, cond, detail) {
   console.error(`FAIL ${name}${detail === undefined ? "" : `: ${detail}`}`);
 }
 const eq = (name, got, want) => check(name, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+const same = (name, got, want) =>
+  check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
-const { __t, stageTemplate, stageLines, stageVars, stageCanvasSize, stageFontSpec,
+const { __t, __spy, stageTemplate, stageLines, stageVars, stageCanvasSize, stageFontSpec,
   safeColor, stageNotes, stageLabelText, setStageData, renderStage, stageMeasure,
   manifestDimensions, currentScene, currentLayout, currentLayoutName,
-  refreshStageDataNow, stageItems, stagePlaceholderSources } = ctx;
+  refreshStageDataNow, stageItems, stagePlaceholderSources,
+  stageKeyAction, stageKeyNav, stageDescription } = ctx;
 const Geometry = ctx.__t.Geometry;
 // The first placeholder item's name, so the "this fell back" assertions do
 // not hardcode a string stage.js owns.
@@ -687,6 +698,146 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
     !document.querySelector("#stage-note").textContent.includes("background image is"),
     document.querySelector("#stage-note").textContent);
   imagePreset = null;
+}
+
+// ---- Task 11: stageKeyAction, the whole keyboard decision, pure -----------
+// No DOM anywhere in this block's inputs or outputs: {key, shiftKey} shapes
+// in, a plain {type, ...} action or null out. This is what actually gets
+// exercised by a real keypress (stageKeyNav, tested separately below with the
+// stub canvas) — driving the DECISION directly here is what makes every
+// branch checkable without one.
+{
+  const key = (k, extra) => ({ key: k, shiftKey: false, altKey: false, ...extra });
+
+  eq("action: an empty layout claims no key at all",
+    stageKeyAction(key("Tab"), null, 0), null);
+
+  // Tab cycles forward, wrapping — but Task 11's own fix for a keyboard trap
+  // the brief's sample code had: Tab past the LAST element (or Shift+Tab
+  // before the first) returns null rather than wrapping past the boundary,
+  // so the browser's normal focus order takes over instead of the canvas
+  // holding Tab forever.
+  eq("action: Tab with nothing selected selects the first element",
+    stageKeyAction(key("Tab"), null, 3).index, 0);
+  eq("action: Tab cycles forward", stageKeyAction(key("Tab"), 0, 3).index, 1);
+  eq("action: Tab past the last element lets focus leave (null, not wrap)",
+    stageKeyAction(key("Tab"), 2, 3), null);
+  eq("action: Shift+Tab cycles backward",
+    stageKeyAction(key("Tab", { shiftKey: true }), 2, 3).index, 1);
+  eq("action: Shift+Tab before the first lets focus leave (null, not wrap)",
+    stageKeyAction(key("Tab", { shiftKey: true }), 0, 3), null);
+  eq("action: Shift+Tab with nothing selected also leaves (nothing to back up from)",
+    stageKeyAction(key("Tab", { shiftKey: true }), null, 3), null);
+
+  // Escape only claims the key when there is something to deselect, so a
+  // stray Escape on an empty selection does not eat the keystroke for no
+  // reason (and, in the DOM glue, is left free for anything else listening).
+  eq("action: Escape with a selection deselects", stageKeyAction(key("Escape"), 1, 3).type, "deselect");
+  eq("action: Escape with nothing selected claims nothing", stageKeyAction(key("Escape"), null, 3), null);
+
+  // Delete/Backspace and the arrows all require a selection.
+  eq("action: Delete needs a selection", stageKeyAction(key("Delete"), null, 3), null);
+  eq("action: Delete removes the selected element", stageKeyAction(key("Delete"), 1, 3).type, "delete");
+  eq("action: Backspace is the same as Delete", stageKeyAction(key("Backspace"), 1, 3).type, "delete");
+  eq("action: an arrow needs a selection too", stageKeyAction(key("ArrowRight"), null, 3), null);
+
+  same("action: ArrowRight nudges +x", stageKeyAction(key("ArrowRight"), 0, 3), { type: "nudge", dx: 1, dy: 0 });
+  same("action: ArrowLeft nudges -x", stageKeyAction(key("ArrowLeft"), 0, 3), { type: "nudge", dx: -1, dy: 0 });
+  same("action: ArrowUp nudges -y", stageKeyAction(key("ArrowUp"), 0, 3), { type: "nudge", dx: 0, dy: -1 });
+  same("action: ArrowDown nudges +y", stageKeyAction(key("ArrowDown"), 0, 3), { type: "nudge", dx: 0, dy: 1 });
+  same("action: Shift is the coarse 10px step",
+    stageKeyAction(key("ArrowDown", { shiftKey: true }), 0, 3), { type: "nudge", dx: 0, dy: 10 });
+
+  eq("action: an unclaimed key (with a selection) is left alone",
+    stageKeyAction(key("a"), 0, 3), null);
+}
+
+// ---- Task 11: stageDescription — what a screen reader is told -------------
+{
+  __t.setState({ scenes: [] });
+  eq("description: no scenes at all", stageDescription(), "Scene preview: no scenes yet");
+
+  __t.setState({
+    layouts: { main: { font: "", elements: [
+      { type: "text", x: 100, y: 200, size: 60, text: "Hi" },
+      { type: "list", x: 10, startY: 20, size: 30, item: "{{ .Name }}" },
+    ] } },
+    scenes: [{ kind: "render", layout: "main" }, { kind: "image", file: "x.png" }],
+  });
+  __t.select(0);
+  __t.selectElement(null);
+  eq("description: scene + kind + element count, nothing selected",
+    stageDescription(), "Scene 1 of 2, kind render. 2 elements");
+
+  __t.selectElement(0);
+  eq("description: a selected text element names its anchor and size",
+    stageDescription(), "Scene 1 of 2, kind render. 2 elements. selected: text element at x 100, y 200, size 60");
+
+  __t.selectElement(1);
+  eq("description: a selected list element names its FIRST ROW, not y",
+    stageDescription(), "Scene 1 of 2, kind render. 2 elements. selected: list element at x 10, first row 20, size 30");
+
+  __t.select(1);
+  __t.selectElement(null);
+  eq("description: an image scene has no layout to count elements in",
+    stageDescription(), "Scene 2 of 2, kind image");
+  __t.select(0);
+}
+
+// ---- Task 11: stageKeyNav — the DOM glue over stageKeyAction ---------------
+// The stub canvas records setAttribute calls, so this checks both that the
+// right effects happen (selection.element, the layout array, one convert per
+// nudge) and that renderStage() keeps #stage's aria-label current.
+{
+  __t.setState({
+    resolution: "1920x1080",
+    layouts: { main: { font: "", background: { color: "black" }, elements: [
+      { type: "text", x: 100, y: 200, size: 60, color: "white", text: "Hello" },
+      { type: "text", x: 500, y: 500, size: 40, color: "white", text: "World" },
+    ] } },
+    scenes: [{ kind: "render", layout: "main", duration: 6 }],
+  });
+  __t.select(0);
+  __t.selectElement(null);
+  __t.setDrag(null);
+  renderStage();
+  __spy.inspector = 0;
+  __spy.converts = 0;
+
+  const kd = (k, extra) => { let prevented = false; stageKeyNav({ key: k, shiftKey: false, altKey: false, preventDefault: () => { prevented = true; }, ...extra }); return prevented; };
+
+  eq("nav: Tab selects the first element and re-renders the inspector", kd("Tab") && __t.selectedElement(), 0);
+  eq("nav: one inspector render per key", __spy.inspector, 1);
+
+  eq("nav: ArrowRight nudges x by 1", kd("ArrowRight"), true);
+  eq("nav: the element actually moved", currentLayout().elements[0].x, 101);
+  eq("nav: a nudge schedules exactly one convert", __spy.converts, 1);
+
+  kd("ArrowDown", { shiftKey: true });
+  eq("nav: Shift+Arrow nudges by 10", currentLayout().elements[0].y, 210);
+
+  eq("nav: Escape deselects", kd("Escape") && __t.selectedElement(), null);
+  eq("nav: an unclaimed key does not call preventDefault", kd("q"), false);
+
+  __t.selectElement(1);
+  kd("Delete");
+  eq("nav: Delete removes the selected element", currentLayout().elements.length, 1);
+  eq("nav: and clears the selection", __t.selectedElement(), null);
+
+  // While a drag is in flight, stageKeyNav must get out of the way entirely —
+  // interact.js's window-bound stageKeyDown owns Escape for that gesture (see
+  // interact_test.js), and nothing here should preventDefault or touch state.
+  __t.setDrag({ mode: "move" });
+  const beforeX = currentLayout().elements[0].x;
+  const claimed = kd("ArrowRight");
+  eq("nav: a drag in flight suppresses ALL of stageKeyNav's own handling", claimed, false);
+  eq("nav: nothing moved while a drag owns the keyboard", currentLayout().elements[0].x, beforeX);
+  __t.setDrag(null);
+
+  renderStage();
+  const label = document.querySelector("#stage").attrs["aria-label"];
+  check("nav: renderStage keeps the aria-label in sync with stageDescription()",
+    label === stageDescription(), label);
 }
 
 // refreshStageDataNow is the actual Task 7 data wiring: no data sources means

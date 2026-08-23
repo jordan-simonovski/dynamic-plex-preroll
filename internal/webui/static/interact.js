@@ -14,10 +14,13 @@
 //
 // Note for Task 11: the machine below is deliberately not the only way to
 // move an element. A patch is just `{x, y}` (or `{x, startY}`, or `{size}`)
-// applied to the element, so a keyboard nudge is `Geometry.moveTo(el, dx, dy)`
+// applied to the element, so a keyboard nudge is `Geometry.nudge(el, dx, dy)`
 // applied the same way — no drag needs to be faked, and no state here needs to
 // exist for it. The inspector's numeric fields already write the same values
 // through their own data-path binding and are untouched by any of this.
+// stage.js's stageKeyNav is where that keyboard path actually lives — it is
+// named differently from this file's own stageKeyDown (below) on purpose; see
+// that function's comment.
 
 // Tolerances are SCREEN pixels, divided by the live scale at press time so the
 // handle and the snap feel the same size however the stage is scaled.
@@ -130,6 +133,19 @@ function stagePointerDown(e) {
   // second pointer on a touchscreen) would otherwise be overwritten here still
   // holding capture. Closing it first means there is no path to a wedged drag.
   if (stageDrag) stageEndDrag();
+  const canvas = $("#stage");
+  // Task 9/11 review fix: below, a press that hits an element calls
+  // preventDefault() so the browser does not start its own drag-image
+  // gesture — but that ALSO suppresses the compatibility mousedown event's
+  // default action, which is what would otherwise have focused the canvas.
+  // tabindex="0" alone is not enough, then: without this, clicking an
+  // element selects it but leaves focus wherever it already was, so the
+  // keyboard nudge Task 11 adds has nowhere to land right after the click
+  // that was supposed to enable it. Focusing explicitly, unconditionally,
+  // rather than only on the branch that calls preventDefault, is what keeps
+  // an empty-canvas click (which selects the scene, not an element) equally
+  // reachable by keyboard afterwards.
+  canvas.focus?.();
   const layout = currentLayout();
   if (!layout) return;
   const dims = stageDimensions();
@@ -149,12 +165,22 @@ function stagePointerDown(e) {
   if (!drag) return;
 
   stageDrag.pointerId = e.pointerId;
-  $("#stage").setPointerCapture(e.pointerId);
+  // moved tracks whether this gesture ever actually applied a patch, so a
+  // press-then-release with no movement in between (a plain select-click)
+  // does not cost a POST /api/convert for a manifest that did not change
+  // (Task 10 review finding).
+  stageDrag.moved = false;
+  canvas.setPointerCapture(e.pointerId);
   e.preventDefault(); // or the browser starts its own drag of the canvas image
 }
 
 function stagePointerMove(e) {
-  if (!stageDrag) return;
+  // Task 9/10 review finding: without the pointerId check, a second finger
+  // pressing elsewhere on a touchscreen closes THIS gesture (see the orphan
+  // guard in stagePointerDown) and starts its own — but the first finger, now
+  // uncaptured, keeps sending pointermove events that would otherwise be read
+  // as driving whatever gesture happens to be live, i.e. the second finger's.
+  if (!stageDrag || e.pointerId !== stageDrag.pointerId) return;
   // A render can replace the layout's elements underneath a gesture — a
   // manifest load resolving mid-drag, a rename retargeting a layout. Writing
   // into an element nobody can see any more is worse than dropping the drag.
@@ -164,6 +190,7 @@ function stagePointerMove(e) {
   }
   const out = Interact.move(stageDrag, stagePointerPos(e));
   Object.assign(stageDrag.target, out.patch);
+  stageDrag.moved = true;
   stageDragGuides = out.guides;
   renderStage();
 }
@@ -178,20 +205,30 @@ function stageEndDrag() {
   if (id != null && canvas.hasPointerCapture && canvas.hasPointerCapture(id)) {
     canvas.releasePointerCapture(id);
   }
+  const moved = stageDrag.moved;
   stageDrag = null;
   stageDragGuides = INTERACT_NO_GUIDES;
   renderStage();
   renderInspector(); // the numeric fields must show where it actually landed
-  scheduleConvert(); // one round-trip at the END of the gesture, not per frame
+  if (moved) scheduleConvert(); // one round-trip at the END of the gesture, not per frame
 }
 
-function stagePointerUp() {
+function stagePointerUp(e) {
+  if (!stageDrag || e.pointerId !== stageDrag.pointerId) return; // the wrong finger releasing
   stageEndDrag();
 }
 
-function stageCancelDrag() {
+// e is optional: the pointercancel listener passes a real event (and only
+// that pointer's cancel may abort this gesture), but stageKeyDown's Escape
+// path below calls this with none — a keyboard cancel is not pointer-scoped.
+function stageCancelDrag(e) {
   if (!stageDrag) return;
+  if (e && e.pointerId !== stageDrag.pointerId) return;
   Object.assign(stageDrag.target, Interact.cancel(stageDrag).patch);
+  // moved is left exactly as stagePointerMove last set it: if the gesture
+  // never moved, the revert is a true no-op (writing the origin back over
+  // itself) and costs no convert either; if it had moved, moved is already
+  // true and the revert still gets saved, same as before this fix.
   stageEndDrag();
 }
 

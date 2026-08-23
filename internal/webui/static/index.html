@@ -25,8 +25,9 @@
       <label class="check"><input type="checkbox" id="toggle-safe"> Safe area</label>
     </div>
     <div class="stage-frame" id="stage-frame">
-      <canvas id="stage" role="img" aria-label="Scene preview"></canvas>
+      <canvas id="stage" tabindex="0" role="application" aria-label="Scene preview"></canvas>
     </div>
+    <p class="muted">Click an element to select it, drag to move, drag the corner handle to resize. With the stage focused: Tab/Shift+Tab steps between elements, arrows nudge (Shift for 10px), Delete removes, Escape selects the scene.</p>
     <p class="muted" id="stage-note"></p>
     <ul id="errors" class="errors" aria-live="polite" aria-label="Validation errors"></ul>
   </section>

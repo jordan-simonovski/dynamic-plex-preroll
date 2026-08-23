@@ -33,7 +33,7 @@ function inspectorTarget() {
 
 const inspectorPanels = {
   preroll: () => `<h2>Pre-roll</h2>${prerollFields()}
-    <p class="empty">No scenes yet — add one from the Scenes card below.</p>`,
+    <p class="empty">No scenes yet — add one with the + buttons in the timeline rail.</p>`,
   element: (t) => elementInspector(t.path, t.el),
   scene: (t) => sceneInspector(t.scene, t.index),
 };
@@ -41,13 +41,19 @@ const inspectorPanels = {
 function renderInspector() {
   const target = inspectorTarget();
   const panel = $("#inspector");
+  // Task 11's real focus model, replacing the Task 8 review's one-line
+  // stopgap (which refocused into the panel unconditionally, every call).
+  // Replacing #inspector's innerHTML destroys whatever was focused inside
+  // it, which only matters when that is where focus actually WAS — e.g. an
+  // element row or the "Remove element" button just clicked. When the
+  // change came from elsewhere (the stage's own Tab/arrow handling, a drag,
+  // the timeline rail), focus must be left alone: stealing it into the
+  // newly-rendered panel would silently move it off the canvas the instant
+  // a keyboard-selected element's inspector panel repainted, breaking the
+  // very nudge keys that selection was for.
+  const hadFocus = document.activeElement && panel.contains(document.activeElement);
   panel.innerHTML = inspectorPanels[target.kind](target);
-  // Holdover from the Task 8 review: replacing #inspector's innerHTML drops
-  // focus to <body>, so a keyboard user has to Tab all the way back from the
-  // top of the document after every selection change. Full focus management
-  // (restoring the field that made sense to land on, not just "the first
-  // one") is Task 11's job; this is the one-line stopgap.
-  panel.querySelector("input, select, textarea, button")?.focus?.();
+  if (hadFocus) panel.querySelector("input, select, textarea, button")?.focus?.();
 }
 
 // selectElement is the ONE place selection.element changes, so the outline on
@@ -179,7 +185,7 @@ function layoutSection(sc) {
   }
   const base = `layouts.${name}`;
   const els = (layout.elements || []).map((el, i) =>
-    `<button class="element-row${i === selection.element ? " selected" : ""}" data-action="select-element" data-index="${i}" aria-pressed="${i === selection.element}">
+    `<button type="button" class="element-row${i === selection.element ? " selected" : ""}" data-action="select-element" data-index="${i}"${i === selection.element ? ' aria-current="true"' : ""}>
        <span class="kind">${esc(el.type)}</span>
        <span class="label">${esc(el.type === "list" ? (el.item || "(row template)") : (el.text || "(empty)").split("\n")[0])}</span>
      </button>`).join("");
