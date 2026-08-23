@@ -1,4 +1,17 @@
-FROM golang:1.26
+# ---- plex-token: tiny helper to mint a Plex auth token ------------------------
+# Pure-Go HTTP client; no ImageMagick/ffmpeg, so this stays small and fast.
+FROM golang:1.26 AS plex-token
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /usr/local/bin/plex-token ./cmd/plex-token
+
+ENTRYPOINT ["plex-token"]
+
+# ---- plex-pre-rolls: full render toolchain (ImageMagick + ffmpeg) -------------
+FROM golang:1.26 AS plex-pre-rolls
 
 # Ignore APT warnings about not having a TTY
 ENV DEBIAN_FRONTEND noninteractive

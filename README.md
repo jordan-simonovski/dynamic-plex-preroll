@@ -193,20 +193,24 @@ hard-coding them.
 ## Getting a Plex token
 
 `PLEX_TOKEN` is an authenticated session token for your Plex account. The
-`plex-token` CLI fetches one by signing in to plex.tv:
+`plex-token` helper fetches one by signing in to plex.tv. Run it through Docker
+so you don't need a Go toolchain:
 
 ```
-go run ./cmd/plex-token -login you@example.com
+docker compose run --rm plex-token -login you@example.com
 ```
 
 You'll be prompted for your password (input is hidden). If your account has
 two-factor auth enabled, pass the verification code:
 
 ```
-go run ./cmd/plex-token -login you@example.com -code 123456
+docker compose run --rm plex-token -login you@example.com -code 123456
 ```
 
-Only the token is written to stdout, so you can pipe it straight into `.env`:
+Only the token is printed, so copy it into `PLEX_TOKEN` in your `.env`. The
+first run builds a small image (no ImageMagick/ffmpeg); later runs are instant.
+
+If you do have Go installed, the same util runs directly:
 
 ```
 echo "PLEX_TOKEN=\"$(go run ./cmd/plex-token -login you@example.com)\"" >> .env
