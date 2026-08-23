@@ -279,7 +279,8 @@ function renderStage() {
   if ($("#toggle-safe")?.checked) drawSafeArea(ctx, dims.width, dims.height);
 
   updateStageChrome(scene, layout);
-  canvas.setAttribute("aria-label", stageDescription());
+  canvas.setAttribute("aria-label", stageLabel());
+  announceSelection();
 }
 
 // Draw order is render.go's: the background is built first and the elements are
@@ -559,6 +560,19 @@ function stagePlaceholderSources(scene, layout) {
   return names;
 }
 
+// safeColor falls back to the default text colour for a transparent value, so
+// `color: none` looks like ordinary white text on the canvas while the render
+// draws it with a zero-alpha fill — i.e. nothing. Rather than hide the element
+// here (it would become unselectable), the stage keeps drawing it and says so:
+// the same disclose-don't-pretend rule the rest of stageNotes follows.
+function stageTransparentElements(layout) {
+  const names = [];
+  ((layout && layout.elements) || []).forEach((el, i) => {
+    if (Geometry.isTransparent(el.color)) names.push(`element ${i + 1} (${el.type})`);
+  });
+  return names;
+}
+
 // stageHasItemFieldGap backs the itemVars/M1 disclosure above: true when a
 // template this scene actually draws references a field the stage cannot
 // honestly fill in. Every list element sees RatingKey/MediaURL in the real
@@ -604,6 +618,10 @@ function updateStageChrome(scene, layout) {
   }
   if (fontWarning) extra.push(fontWarning);
   if (backgroundImageNote) extra.push(backgroundImageNote);
+  const invisible = stageTransparentElements(layout);
+  if (invisible.length) {
+    extra.push(`Colour "none" is transparent: ${invisible.join(", ")} ${invisible.length === 1 ? "is" : "are"} drawn here in the default colour, but the render draws nothing at all.`);
+  }
 
   note.textContent = stageNotes(scene, layout, currentLayoutName(), extra.join(" "));
 }
@@ -708,23 +726,48 @@ function stageKeyNav(e) {
   }
 }
 
-// stageDescription is what a screen reader is told the canvas contains. A
-// canvas is otherwise a blank rectangle to assistive technology, and this is
-// the only place the scene's actual content is described — it is what
-// renderStage() sets as #stage's aria-label on every redraw.
-function stageDescription() {
+// A canvas is a blank rectangle to assistive technology, so everything below
+// is the only description of it there is. It is deliberately split in two.
+//
+// stageLabel is the canvas's accessible NAME, and it has to be STABLE.
+// Changing the accessible name of the element that currently has focus makes
+// NVDA and JAWS re-announce it, so a name carrying the selection's live
+// coordinates meant one full sentence re-read per arrow-key press — nudging
+// 10px a step at a time read the scene out ten times, which made the keyboard
+// nudging role="application" exists to enable unusable with the very software
+// it was for. This names what the canvas IS; it changes only when the scene,
+// the layout or the element count does.
+function stageLabel() {
   const scene = currentScene();
   if (!scene) return "Scene preview: no scenes yet";
   const layout = currentLayout();
-  const parts = [`Scene ${selection.sceneIndex + 1} of ${state.scenes.length}, kind ${scene.kind}`];
+  const parts = [`Scene preview: scene ${selection.sceneIndex + 1} of ${state.scenes.length}, kind ${scene.kind}`];
   if (layout) {
     const els = layout.elements || [];
     parts.push(`${els.length} element${els.length === 1 ? "" : "s"}`);
-    if (selection.element != null && els[selection.element]) {
-      const el = els[selection.element];
-      const anchor = el.type === "list" ? `x ${el.x}, first row ${el.startY}` : `x ${el.x}, y ${el.y}`;
-      parts.push(`selected: ${el.type} element at ${anchor}, size ${el.size}`);
-    }
   }
-  return parts.join(". ");
+  return parts.join(", ");
 }
+
+// stageSelectionText is the CHANGING half — what a nudge or a new selection
+// actually alters, and nothing else. It goes to #stage-live, an
+// aria-live="polite" region, which announces an update without renaming or
+// stealing focus.
+function stageSelectionText() {
+  const layout = currentLayout();
+  const els = (layout && layout.elements) || [];
+  if (selection.element == null || !els[selection.element]) return "";
+  const el = els[selection.element];
+  const anchor = el.type === "list" ? `x ${el.x}, first row ${el.startY}` : `x ${el.x}, y ${el.y}`;
+  return `${el.type} element at ${anchor}, size ${el.size}`;
+}
+
+// Debounced because a held arrow key fires a stream of nudges: polite regions
+// queue, so undebounced this would read out every intermediate pixel. One
+// announcement once the user stops moving is the useful one.
+const announceSelection = debounce(() => {
+  const live = $("#stage-live");
+  if (!live) return;
+  const text = stageSelectionText();
+  if (live.textContent !== text) live.textContent = text;
+}, 400);

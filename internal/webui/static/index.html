@@ -26,10 +26,19 @@
       <label class="check"><input type="checkbox" id="toggle-safe"> Safe area</label>
     </div>
     <div class="stage-frame" id="stage-frame">
+      <!-- role="application" is kept: the canvas is a real widget (Tab cycles
+           its elements, arrows nudge, Delete removes), and only that role
+           stops a screen reader swallowing the arrow keys for browse-mode
+           navigation. What made it painful was the label churning on every
+           redraw; stage.js now keeps this name stable and sends the moving
+           detail to #stage-live instead. -->
       <canvas id="stage" tabindex="0" role="application" aria-label="Scene preview"></canvas>
     </div>
     <p class="muted">Click an element to select it, drag to move, drag the corner handle to resize. With the stage focused: Tab/Shift+Tab steps between elements, arrows nudge (Shift for 10px), Delete removes, Escape selects the scene.</p>
-    <p class="muted" id="stage-note"></p>
+    <p class="muted" id="stage-note" aria-live="polite"></p>
+    <!-- The stage's running commentary: what is selected and where it is,
+         announced without renaming the focused canvas. -->
+    <p id="stage-live" class="sr-only" aria-live="polite"></p>
     <section class="render-panel" id="render-panel" hidden>
       <div class="preview-head">
         <h2>Render preview</h2>
