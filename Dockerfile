@@ -48,3 +48,15 @@ RUN CGO_CFLAGS_ALLOW='-Xpreprocessor' GOOS=linux GOARCH=$BUILDARCH \
     && go build ./cmd/plex-pre-rolls
 
 CMD ["./plex-pre-rolls"]
+
+# ---- preroll-ui: browser-based manifest editor --------------------------------
+# Pure-Go HTTP server; no ImageMagick/ffmpeg, so this stays small and fast.
+FROM golang:1.26 AS preroll-ui
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /usr/local/bin/preroll-ui ./cmd/preroll-ui
+
+ENTRYPOINT ["preroll-ui"]
