@@ -23,6 +23,30 @@ function setStageData(resolved) {
   };
 }
 
+// refreshStageData asks the server to run every data source and redraws with
+// what came back. It is debounced hard (2s) because each call hits Plex for
+// real: the stage is allowed to lag the form, but it must never hammer the
+// server on every keystroke.
+//
+// Deviation from the Task 7 brief: the brief's snippet wrote into a
+// `stageSources` global with a `.__vars` key stitched in, which predates the
+// {vars, sources} setStageData() above (a Task 6 review fix). apiResolveData's
+// reply is already shaped exactly like setStageData's argument, so it is
+// passed straight through.
+let stageDataReason = "";
+async function refreshStageDataNow() {
+  if (!Object.keys(state.data).length) {
+    setStageData({});
+    renderStage();
+    return;
+  }
+  const out = await apiResolveData(state.data);
+  setStageData(out);
+  stageDataReason = out.configured ? "" : (out.reason || "Plex is not configured — showing placeholder data.");
+  renderStage();
+}
+const refreshStageData = debounce(refreshStageDataNow, 2000);
+
 // PLACEHOLDER_ITEMS stand in when a source has not been (or cannot be)
 // resolved. They are deliberately realistic — varied lengths, plausible view
 // counts — because a preview made of "Item 1 / Item 2" hides exactly the
@@ -63,14 +87,28 @@ const STAGE_DEFAULT_VARS = {
 // sees the current item (engine.go itemVars), and the stage previews item 1.
 function stageVars(scene) {
   const vars = { ...STAGE_DEFAULT_VARS, ...stageData.vars };
-  if (scene && scene.kind === "clips") Object.assign(vars, itemVars(stageItems(scene.source)[0]));
-  for (const [k, v] of Object.entries((scene && scene.vars) || {})) vars[k] = v;
+  if (scene && scene.kind === "clips") {
+    Object.assign(vars, itemVars(stageItems(scene.source)[0]));
+  } else {
+    // engine.go's sceneContext (engine.go:339-348) overlays Scene.Vars only
+    // for a render scene; a clips label's context is itemVars alone
+    // (engine.go:210) — Scene.Vars never reaches it. Applying it to a clips
+    // scene here would draw text the real render never does (review fix M2).
+    for (const [k, v] of Object.entries((scene && scene.vars) || {})) vars[k] = v;
+  }
   return vars;
 }
 // render.go itemContext: a LIST element's item template sees the item and
 // nothing else — no globals, no scene vars. Mirrored rather than smoothed over,
 // so `{{ .Period }}` inside a list item shows up unresolved here exactly as it
 // would fail in the renderer.
+//
+// render.go:294-303 and engine.go:229-236 also put RatingKey and MediaURL in
+// scope. The resolve endpoint deliberately sends neither to the browser:
+// RatingKey was never added to data.go's previewItem, and MediaURL would put
+// a Plex-token-bearing URL into page JS. So a template using either stays an
+// unresolved literal on the stage; stageHasItemFieldGap below decides when to
+// say so in the note (review fix M1).
 function itemVars(item) {
   const it = item || {};
   return { Rank: it.rank, Name: it.name, Views: it.views };
@@ -207,6 +245,7 @@ function renderStage() {
   ctx.clearRect(0, 0, dims.width, dims.height);
 
   fontWarning = "";
+  backgroundImageNote = "";
   const scene = currentScene();
   const layout = currentLayout();
   drawScene(ctx, scene, layout, dims.width, dims.height);
@@ -250,28 +289,80 @@ function drawBackground(ctx, scene, layout, width, height) {
   ctx.fillRect(0, 0, width, height);
 }
 
-// Task 7 replaces the grey cells with real artwork; until then a scene
-// background is drawn as labelled placeholder tiles in the SAME cells the
-// renderer would use, so the montage arrangement (and the dim) is visible.
+// manifest.go's (*SceneBackground).IsImage() is false for an unset Mode, so
+// an unset mode is a TRAILER MONTAGE, not art (review fix M4) — the label text
+// and the art/thumb key choice below both need to agree with that, not with
+// `mode || "art"`.
+function sceneBgEffectiveMode(mode) {
+  return mode === "art" || mode === "poster" ? mode : "trailers";
+}
+
+// drawSceneBackground mirrors engine.go + render.go: take up to `limit` items
+// whose art/poster is actually set, lay them out cover or grid, then dim.
+//
+// Two honest approximations, both disclosed in the note under the canvas: a
+// trailers-mode (or unset-mode, M4) background is a real montage of trailer
+// VIDEO in the render but only the items' posters here; and render.go dims
+// with ImageMagick's ModulateImage (a brightness scale) where the stage uses
+// a black overlay — close, not equal.
 function drawSceneBackground(ctx, bg, width, height) {
-  const count = bg.limit > 0 ? bg.limit : 4;
-  const tile = bg.tile || "grid"; // engine.go backgroundTile's default
-  // gridCells(1) is the full frame, which is exactly the cover case.
-  const cells = Geometry.gridCells(tile === "grid" ? count : 1, width, height);
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.font = stageFontSpec(Math.round(height / 28), "sans-serif");
-  for (const [i, cell] of cells.entries()) {
-    ctx.fillStyle = i % 2 === 0 ? "#20242c" : "#262b34";
-    ctx.fillRect(cell.x, cell.y, cell.w, cell.h);
-    ctx.fillStyle = "#5a6376";
-    ctx.fillText(`${bg.mode || "art"} ${i + 1} · ${bg.source}`, cell.x + cell.w / 2, cell.y + cell.h / 2);
+  const items = stageItems(bg.source);
+  const limit = bg.limit > 0 ? bg.limit : 4; // engine.go: defaultBackgroundLimit
+  const mode = sceneBgEffectiveMode(bg.mode);
+  const key = mode === "art" ? "art" : "thumb"; // engine.go's imageURLs
+  const urls = [];
+  for (const item of items) {
+    // No art->thumb fallback: engine.go's imageURLs skips an item outright
+    // when the chosen field is empty rather than trying the other one, and
+    // the cell count below must match what it actually keeps (review fix M6).
+    const u = item[key];
+    if (u) urls.push(u);
+    if (urls.length >= limit) break;
   }
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, width, height);
+
+  if (!urls.length) {
+    ctx.fillStyle = "#20242c";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "#4a5164";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = stageFontSpec(Math.round(height / 28), "sans-serif");
+    ctx.fillText(`${mode} from ${bg.source}`, width / 2, height / 2);
+  } else {
+    // engine.go's backgroundTile defaults an unset tile to grid; render.go
+    // only takes the grid path with MORE than one image, else it covers with
+    // the first image alone. The cell count therefore follows the RESOLVED,
+    // usable image count (urls.length), never the configured limit (M6).
+    const tile = bg.tile || "grid";
+    // gridCells(1) is the full frame, which is exactly the cover case — so
+    // even the non-grid path goes through geometry.js rather than hand-coding
+    // the same rect here.
+    const cells = Geometry.gridCells(tile === "grid" && urls.length > 1 ? urls.length : 1, width, height);
+    for (let i = 0; i < cells.length; i++) drawImageURL(ctx, urls[i], cells[i]);
+  }
+
   const dim = Geometry.dimAlpha(bg.dim);
   if (dim > 0) {
     ctx.fillStyle = `rgba(0,0,0,${dim})`;
     ctx.fillRect(0, 0, width, height);
   }
+}
+
+// Artwork arrives as a same-origin proxy URL from /api/data/resolve (see
+// data.go's proxyImage), so it is loaded directly rather than through
+// /api/files/raw.
+function drawImageURL(ctx, url, cell) {
+  const img = loadImage(url);
+  if (!img) {
+    ctx.fillStyle = "#1b1f26";
+    ctx.fillRect(cell.x, cell.y, cell.w, cell.h);
+    return;
+  }
+  const r = Geometry.coverRect(img.naturalWidth, img.naturalHeight, cell.w, cell.h);
+  ctx.drawImage(img, r.sx, r.sy, r.sw, r.sh, cell.x, cell.y, cell.w, cell.h);
 }
 
 // A faint checkerboard under everything, so "background: none" reads as
@@ -300,12 +391,25 @@ function loadImage(url) {
   return null; // a fresh Image is never ready synchronously; onload redraws
 }
 
+// backgroundImageNote discloses I1: render.go:71-77 reads a layout background
+// image at its NATIVE size and draws element text at DSL coordinates directly
+// onto it; only pipeline.go:44's ffmpeg `scale=W:H` stretches the whole frame
+// to the manifest resolution afterwards. The stage instead stretches the
+// image to the manifest frame up front and draws text in manifest space —
+// the same final pixels UNLESS the image's native size differs from the
+// manifest resolution, in which case every element is off by that ratio.
+// Reset once per renderStage() call, like fontWarning.
+let backgroundImageNote = "";
+
 function drawImagePath(ctx, path, x, y, w, h) {
   const img = loadImage(`/api/files/raw?path=${encodeURIComponent(path)}`);
   if (!img) {
     ctx.fillStyle = "#1b1f26";
     ctx.fillRect(x, y, w, h);
     return;
+  }
+  if (img.naturalWidth > 0 && img.naturalHeight > 0 && (img.naturalWidth !== w || img.naturalHeight !== h)) {
+    backgroundImageNote = `The background image is ${img.naturalWidth}×${img.naturalHeight}, not the manifest's ${w}×${h} — the render positions text in the image's pixels, so it will land slightly differently there than shown here.`;
   }
   ctx.drawImage(img, x, y, w, h);
 }
@@ -370,6 +474,9 @@ function stageNotes(scene, layout, layoutName, warning) {
   if (layout && stagePlaceholderSources(scene, layout).length) {
     notes.push(`Placeholder data for ${stagePlaceholderSources(scene, layout).join(", ")}.`);
   }
+  if (layout && stageHasItemFieldGap(scene, layout)) {
+    notes.push("RatingKey and MediaURL aren't sent to the browser (MediaURL carries a Plex token) — templates using them are shown unresolved here but resolve in the real render.");
+  }
   if (warning) notes.push(warning);
   return notes.join(" ");
 }
@@ -385,11 +492,51 @@ function stagePlaceholderSources(scene, layout) {
   return names;
 }
 
+// stageHasItemFieldGap backs the itemVars/M1 disclosure above: true when a
+// template this scene actually draws references a field the stage cannot
+// honestly fill in. Every list element sees RatingKey/MediaURL in the real
+// render (render.go:294-303); a clips scene's label folds the same fields
+// into its text elements too (engine.go:229-236, stage.js's stageVars).
+const ITEM_FIELD_GAP_RE = /\{\{\s*\.(RatingKey|MediaURL)\b/;
+function stageHasItemFieldGap(scene, layout) {
+  const uses = (s) => ITEM_FIELD_GAP_RE.test(s || "");
+  for (const el of (layout && layout.elements) || []) {
+    if (el.type === "list" && uses(el.item)) return true;
+    if (el.type === "text" && scene && scene.kind === "clips" && uses(el.text)) return true;
+  }
+  return false;
+}
+
+// updateStageChrome is the impure half of the note: it gathers everything
+// that can only be known from mutable page state (the last resolve's
+// reason/errors, whether a font or a background image is misbehaving, the
+// scene-background approximations) into one string and hands it to the pure
+// stageNotes() as its `warning`, so ordering and joining stay pinned by that
+// function's own tests.
 function updateStageChrome(scene, layout) {
   const label = $("#stage-label");
   const note = $("#stage-note");
   if (label) label.textContent = stageLabelText(scene, selection.sceneIndex, currentLayoutName());
-  if (note) note.textContent = stageNotes(scene, layout, currentLayoutName(), fontWarning);
+  if (!note) return;
+
+  const extra = [];
+  if (stageDataReason) extra.push(stageDataReason);
+  for (const [name, src] of Object.entries(stageData.sources)) {
+    if (src && src.error) extra.push(`${name}: ${src.error}`);
+  }
+  const bg = scene && scene.background;
+  if (bg && bg.source) {
+    if (sceneBgEffectiveMode(bg.mode) === "trailers") {
+      extra.push("The render plays a muted trailer montage here; the preview shows the same items' posters.");
+    }
+    if (bg.dim > 0) {
+      extra.push("Dimming is approximated with a black overlay; the render uses a brightness scale.");
+    }
+  }
+  if (fontWarning) extra.push(fontWarning);
+  if (backgroundImageNote) extra.push(backgroundImageNote);
+
+  note.textContent = stageNotes(scene, layout, currentLayoutName(), extra.join(" "));
 }
 
 // The stage is sized from its container, so a window resize must redraw it.

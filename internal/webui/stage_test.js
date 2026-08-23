@@ -83,12 +83,35 @@ class FontFace {
   load() { fontLoads++; return Promise.reject(new Error("no font server in a test")); }
 }
 
+// I1: naturalWidth/naturalHeight are set synchronously (real Image loading is
+// async, but nothing here needs to test the async edge — only what happens
+// once dimensions are known) whenever a test has armed `imagePreset`, so
+// drawImagePath's size-mismatch check has something to compare against.
+let imagePreset = null;
+class Image {
+  constructor() { this.complete = false; this.naturalWidth = 0; this.naturalHeight = 0; }
+  set src(v) {
+    this._src = v;
+    if (imagePreset) { this.complete = true; this.naturalWidth = imagePreset.w; this.naturalHeight = imagePreset.h; }
+  }
+}
+
+// apiResolveData's fetch: a test arms `fetchResponse` and reads `fetchCalls`
+// to check whether the network was hit at all (refreshStageDataNow must not
+// call it when there are no data sources).
+let fetchCalls = 0;
+let fetchResponse = { configured: false, sources: {} };
+function stageFetch() {
+  fetchCalls++;
+  return Promise.resolve({ ok: true, json: async () => fetchResponse });
+}
+
 const ctx = vm.createContext({
   document,
   window: { addEventListener() {}, devicePixelRatio: 2 },
   FontFace,
-  Image: class { set src(v) { this._src = v; } },
-  fetch: () => Promise.resolve({ ok: true, json: async () => [] }),
+  Image,
+  fetch: stageFetch,
   setTimeout, clearTimeout,
   confirm: () => true,
   navigator: { clipboard: { writeText: async () => {} } },
@@ -96,7 +119,7 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "stage.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "api.js", "stage.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 // `state` and `selection` are top-level `let`s, so they live in the context's
@@ -107,6 +130,7 @@ vm.runInContext(`globalThis.__t = {
   setState: (s) => { state = normalize(s); },
   select: (i) => { selection.sceneIndex = i; },
   Geometry,
+  stageDataReason: () => stageDataReason,
 };`, ctx);
 
 // ---- assertions ------------------------------------------------------------
@@ -119,8 +143,9 @@ function check(name, cond, detail) {
 const eq = (name, got, want) => check(name, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
 const { __t, stageTemplate, stageLines, stageVars, stageCanvasSize, stageFontSpec,
-  safeColor, stageNotes, stageLabelText, setStageData, renderStage,
-  manifestDimensions, currentScene, currentLayout, currentLayoutName } = ctx;
+  safeColor, stageNotes, stageLabelText, setStageData, renderStage, stageMeasure,
+  manifestDimensions, currentScene, currentLayout, currentLayoutName,
+  refreshStageDataNow, stageItems } = ctx;
 const Geometry = ctx.__t.Geometry;
 
 // manifestDimensions: a half-typed resolution must not collapse the stage.
@@ -243,6 +268,19 @@ const Geometry = ctx.__t.Geometry;
   eq("vars: a clips label sees the first item", stageVars(currentScene()).Name, "The Grand Budapest Hotel");
 }
 
+// M2: engine.go's sceneContext (engine.go:339-348) overlays Scene.Vars only
+// for a render scene; a clips label's context is itemVars alone (engine.go:
+// 210) with no Scene.Vars mixed in. A clip scene's own vars must not leak
+// onto the stage where the real render never draws them.
+{
+  __t.setState({
+    data: { top: {} }, layouts: {},
+    scenes: [{ kind: "clips", source: "top", label: "l", vars: { Extra: "should not appear" } }],
+  });
+  __t.select(0);
+  eq("vars: clips scene vars are not applied (M2)", stageVars(currentScene()).Extra, undefined);
+}
+
 // Font spec: the generic family is unquoted, and NOTHING clamps the size —
 // geometry.js's 8..512 resize clamp must never reach a display path.
 {
@@ -250,6 +288,23 @@ const Geometry = ctx.__t.Geometry;
   eq("font: loaded family", stageFontSpec(48, "prerollfont0"), '48px "prerollfont0", sans-serif');
   eq("font: no upper clamp", stageFontSpec(700, "sans-serif"), "700px sans-serif");
   eq("font: no lower clamp", stageFontSpec(2, "sans-serif"), "2px sans-serif");
+}
+
+// M5: stageMeasure has no caller yet (Task 9's drag/resize is next), but its
+// contract is pinned here so that caller can trust it: real glyph metrics
+// when the browser reports them, the 0.8/0.2 em split (matching
+// geometry.js's own documented fallback) when it does not.
+{
+  const full = { measureText: () => ({ width: 42, actualBoundingBoxAscent: 30, actualBoundingBoxDescent: 6 }) };
+  const m1 = stageMeasure(full, 40)("hi");
+  eq("measure: width from ctx.measureText", m1.width, 42);
+  eq("measure: ascent from ctx.measureText", m1.ascent, 30);
+  eq("measure: descent from ctx.measureText", m1.descent, 6);
+
+  const sparse = { measureText: () => ({ width: 10 }) };
+  const m2 = stageMeasure(sparse, 50)("x");
+  eq("measure: ascent falls back to 0.8em", m2.ascent, 40);
+  eq("measure: descent falls back to 0.2em", m2.descent, 10);
 }
 
 // safeColor: a half-typed colour must not paint the previous element's colour.
@@ -276,6 +331,27 @@ const Geometry = ctx.__t.Geometry;
   check("note: placeholder data is disclosed", withList.includes("Placeholder data for top."), withList);
   check("note: font warning is appended",
     stageNotes({ kind: "render" }, { elements: [] }, "t", "no font").endsWith("no font"));
+
+  // M1: RatingKey/MediaURL are in render.go's item context (render.go:294-303)
+  // but the resolve endpoint never sends either to the browser — say so only
+  // when a template this scene actually draws would use them.
+  const ratingKeyList = stageNotes({ kind: "render" },
+    { elements: [{ type: "list", source: "top", item: "{{ .RatingKey }}" }] }, "t", "");
+  check("note: a list item using RatingKey is disclosed (M1)",
+    ratingKeyList.includes("RatingKey") && ratingKeyList.includes("MediaURL"), ratingKeyList);
+  const mediaURLLabel = stageNotes({ kind: "clips" },
+    { elements: [{ type: "text", text: "{{ .MediaURL }}" }] }, "l", "");
+  check("note: a clips label using MediaURL is disclosed (M1)", mediaURLLabel.includes("MediaURL"), mediaURLLabel);
+  const untouched = stageNotes({ kind: "render" },
+    { elements: [{ type: "list", source: "top", item: "{{ .Name }}" }] }, "t", "");
+  check("note: a template that avoids them stays quiet", !untouched.includes("RatingKey"), untouched);
+  // A render scene's own TEXT elements never see itemVars at all (only its
+  // list elements do), so MediaURL there is just an unknown var, not this gap.
+  const renderTextIgnored = stageNotes({ kind: "render" },
+    { elements: [{ type: "text", text: "{{ .MediaURL }}" }] }, "t", "");
+  check("note: a render scene's text elements are not item context",
+    !renderTextIgnored.includes("MediaURL"), renderTextIgnored);
+
   eq("label: no scene", stageLabelText(null, 0, ""), "No scenes yet");
   eq("label: scene", stageLabelText({ kind: "render" }, 2, "title"), "Scene 3 · render · title");
   eq("label: no layout", stageLabelText({ kind: "image" }, 0, ""), "Scene 1 · image");
@@ -362,7 +438,8 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
 }
 
 // A scene background REPLACES the layout's own, exactly as render.go's
-// Layout() takes one branch or the other.
+// Layout() takes one branch or the other. With resolved artwork, the CELL
+// COUNT follows the usable image count, not the configured limit (M6).
 {
   __t.setState({
     data: { top: {} },
@@ -370,20 +447,52 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
     scenes: [{ kind: "render", layout: "l", background: { source: "top", mode: "art", tile: "grid", dim: 0.5, limit: 4 } }],
   });
   __t.select(0);
+  // 4 items resolve but only 3 carry Art — engine.go's imageURLs (engine.go:
+  // 256-271) skips the 4th outright rather than falling back to Thumb, and
+  // the grid must follow what it actually kept, not the configured limit.
+  setStageData({ vars: {}, sources: { top: { items: [
+    { rank: 1, name: "A", art: "/api/plex/image?u=a" },
+    { rank: 2, name: "B", art: "/api/plex/image?u=b" },
+    { rank: 3, name: "C", art: "" },
+    { rank: 4, name: "D", art: "/api/plex/image?u=d" },
+  ] } } });
   const calls = draw();
   eq("draw: the layout colour is not painted under a scene background",
     calls.filter((c) => c.op === "fillRect" && c.fill === "#101010").length, 0);
-  const cells = Geometry.gridCells(4, 1920, 1080);
+
+  const cells = Geometry.gridCells(3, 1920, 1080);
   const tiles = calls.filter((c) => c.op === "fillRect" && c.args[2] === cells[0].w && c.args[3] === cells[0].h);
-  eq("draw: four grid cells", tiles.length, 4);
+  eq("draw: cell count follows the usable image count, not the limit (M6)", tiles.length, 3);
   eq("draw: cells come from geometry.js",
     JSON.stringify(tiles.map((c) => c.args.slice(0, 2))),
     JSON.stringify(cells.map((c) => [c.x, c.y])));
   const dim = calls.filter((c) => c.op === "fillRect" && c.fill === "rgba(0,0,0,0.5)");
   eq("draw: the dim is composited over the whole frame", dim.length, 1);
-  check("draw: the dim lands after the cells", calls.indexOf(dim[0]) > calls.indexOf(tiles[3]));
-  check("draw: placeholder cells name their source",
-    texts(calls).every((c) => c.text.includes("top")), JSON.stringify(texts(calls).map((c) => c.text)));
+  check("draw: the dim lands after the cells", calls.indexOf(dim[0]) > calls.indexOf(tiles[2]));
+  setStageData(null);
+}
+
+// No usable art at all (offline placeholders, or a source whose items simply
+// have none) falls back to one labelled box for the whole frame rather than
+// guessing a cell count nothing backs. An unset mode is a trailer montage,
+// not art (manifest.go's IsImage(), review fix M4), so the label — and the
+// montage note — must say so too, not just an explicit mode: trailers.
+{
+  __t.setState({
+    data: { top: {} },
+    layouts: { l: { font: "", background: {}, elements: [] } },
+    scenes: [{ kind: "render", layout: "l", background: { source: "top", tile: "grid", limit: 4 } }],
+  });
+  __t.select(0);
+  const calls = draw();
+  const wholeFrame = calls.filter((c) => c.op === "fillRect" && c.args[2] === 1920 && c.args[3] === 1080);
+  check("draw: no usable art falls back to a single frame-sized box", wholeFrame.length >= 1);
+  const labels = texts(calls);
+  eq("draw: exactly one label drawn", labels.length, 1);
+  eq("draw: unset mode labels itself trailers, not art (M4)", labels[0].text, "trailers from top");
+  check("draw: the montage note fires for an unset mode too (M4)",
+    document.querySelector("#stage-note").textContent.includes("muted trailer montage"),
+    document.querySelector("#stage-note").textContent);
 }
 
 // The safe-area guide, and a resolution the manifest actually asked for.
@@ -442,8 +551,85 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
     document.querySelector("#stage-note").textContent);
 }
 
-if (failures) {
-  console.error(`\n${failures} check(s) failed`);
-  process.exit(1);
+// I1: render.go reads a layout background image at its NATIVE size and draws
+// element text directly onto it (render.go:71-77); only pipeline.go's ffmpeg
+// scale=W:H stretches the whole frame to the manifest resolution afterwards
+// (pipeline.go:44). The stage instead stretches the image up front, so text
+// lands identically UNLESS the image's native size differs from the manifest
+// resolution — that residual must be disclosed, not silently wrong.
+{
+  const layoutWith = (image) => ({
+    resolution: "1920x1080",
+    layouts: { l: { font: "", background: { image }, elements: [] } },
+    scenes: [{ kind: "render", layout: "l" }],
+  });
+
+  imagePreset = null;
+  __t.setState(layoutWith("media/bg-loading.png"));
+  __t.select(0);
+  draw();
+  check("draw: no size note until the image has loaded",
+    !document.querySelector("#stage-note").textContent.includes("background image is"),
+    document.querySelector("#stage-note").textContent);
+
+  // loadImage() (stage.js) never treats a just-constructed Image as ready —
+  // real image loading is async — so the first draw() only primes the cache;
+  // the second is what actually sees the (stubbed) loaded image.
+  imagePreset = { w: 3840, h: 2160 }; // a 4K background on a 1080p manifest
+  __t.setState(layoutWith("media/bg-mismatch.png"));
+  __t.select(0);
+  draw();
+  const calls = draw();
+  eq("draw: the mismatched image is still stretched to the frame",
+    calls.filter((c) => c.op === "drawImage" &&
+      JSON.stringify(c.args.slice(1)) === JSON.stringify([0, 0, 1920, 1080])).length, 1);
+  const note = document.querySelector("#stage-note").textContent;
+  check("draw: a background image size mismatch is disclosed (I1)",
+    note.includes("3840×2160") && note.includes("1920×1080"), note);
+
+  imagePreset = { w: 1920, h: 1080 }; // matching size: no residual, no note
+  __t.setState(layoutWith("media/bg-match.png"));
+  __t.select(0);
+  draw();
+  draw();
+  check("draw: a matching image size stays quiet",
+    !document.querySelector("#stage-note").textContent.includes("background image is"),
+    document.querySelector("#stage-note").textContent);
+  imagePreset = null;
 }
-console.log("stage.js checks passed");
+
+// refreshStageDataNow is the actual Task 7 data wiring: no data sources means
+// no network call at all, and apiResolveData's reply flows into setStageData
+// and stageDataReason unmodified (see the deviation note on refreshStageData
+// in stage.js — the brief's snippet predates the {vars, sources} shape).
+(async () => {
+  __t.setState({ data: {}, layouts: {}, scenes: [] });
+  fetchCalls = 0;
+  fetchResponse = { configured: true, sources: { top: { items: [{ rank: 1, name: "should not be fetched" }] } } };
+  await refreshStageDataNow();
+  eq("resolve: no data sources means no network call", fetchCalls, 0);
+  eq("resolve: stageDataReason clear with nothing to resolve", __t.stageDataReason(), "");
+
+  __t.setState({ data: { top: { provider: "plex.top", params: {} } }, layouts: {}, scenes: [] });
+  fetchResponse = { configured: false, reason: "Plex is not configured (set PLEX_URL and PLEX_TOKEN); showing placeholder data" };
+  await refreshStageDataNow();
+  eq("resolve: an unconfigured reason is surfaced", __t.stageDataReason(), fetchResponse.reason);
+  eq("resolve: an unconfigured reply still falls back to placeholders", stageItems("top").length, 5);
+
+  fetchResponse = {
+    configured: true,
+    vars: { Period: "Year" },
+    sources: { top: { items: [{ rank: 1, name: "Heat", views: 1, art: "/api/plex/image?u=a" }] } },
+  };
+  await refreshStageDataNow();
+  eq("resolve: a configured reply clears the reason", __t.stageDataReason(), "");
+  eq("resolve: a configured reply's items replace the placeholders", stageItems("top").length, 1);
+  eq("resolve: a configured reply's item is passed through", stageItems("top")[0].name, "Heat");
+  eq("resolve: a configured reply's vars are exposed", stageVars({ kind: "render" }).Period, "Year");
+
+  if (failures) {
+    console.error(`\n${failures} check(s) failed`);
+    process.exit(1);
+  }
+  console.log("stage.js checks passed");
+})();

@@ -255,7 +255,7 @@ function sceneFields(sc, i, base) {
       ${field("Source", select(`${base}.background.source`, bg.source, Object.keys(state.data)))}
       ${field("Mode", select(`${base}.background.mode`, bg.mode, ["art", "poster", "trailers"]),
         "art/poster: still images · trailers: muted video montage")}
-      ${field("Tile", select(`${base}.background.tile`, bg.tile ?? "", ["", "cover", "grid", "sequence"], { emptyLabel: "cover (default)" }),
+      ${field("Tile", select(`${base}.background.tile`, bg.tile ?? "", ["", "cover", "grid", "sequence"], { emptyLabel: "grid (default)" }),
         "grid: up to 4 items 2×2 · sequence: trailers back to back")}
       ${field("Dim", `<input type="range" data-path="${esc(base)}.background.dim" data-type="number" min="0" max="1" step="0.05" value="${esc(bg.dim ?? 0)}">`,
         "0 = untouched, 1 = black — keeps overlaid text legible")}
