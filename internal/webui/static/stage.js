@@ -275,6 +275,7 @@ function renderStage() {
   const layout = currentLayout();
   drawScene(ctx, scene, layout, dims.width, dims.height);
   drawSelection(ctx, size.manifestPerCSS);
+  drawGuides(ctx, dims.width, dims.height, size.manifestPerCSS); // interact.js
   if ($("#toggle-safe")?.checked) drawSafeArea(ctx, dims.width, dims.height);
 
   updateStageChrome(scene, layout);
@@ -517,16 +518,6 @@ function drawSelection(ctx, px) {
   ctx.fillStyle = "#e5a00d";
   ctx.fillRect(h.x - s, h.y - s, s * 2, s * 2);
   ctx.restore();
-}
-
-// selectAt turns a click into a selection: the topmost element under the
-// pointer, or nothing (which selects the scene itself).
-function selectAt(clientX, clientY) {
-  const canvas = $("#stage");
-  const { width } = stageDimensions();
-  const p = Geometry.toManifest(clientX, clientY, canvas.getBoundingClientRect(), width);
-  const hit = Geometry.hitTest(stageBoxCache, p.x, p.y);
-  selectElement(hit === -1 ? null : hit);
 }
 
 // ---- chrome ----------------------------------------------------------------

@@ -211,11 +211,20 @@ for (const root of ["#editor", "#inspector"]) {
   el.addEventListener("click", onEditorClick);
 }
 
-// Clicking the stage selects the topmost element under the pointer, or the
-// scene when the click lands on empty canvas. Task 11 adds the keyboard
-// equivalents; the inspector's element rows are already keyboard-reachable, so
-// no property is behind this click alone.
-$("#stage").addEventListener("click", (e) => selectAt(e.clientX, e.clientY));
+// Pointer events, not click: pointerdown does the selecting too (a click is
+// just a drag that went nowhere), and two handlers would fight over which one
+// owns the selection. The handlers themselves live in interact.js.
+//
+// Task 11 adds the keyboard equivalents. Nothing is behind the pointer alone
+// in the meantime: the inspector's element rows select, and its X / Y / Font
+// size fields set exactly the values a drag sets.
+$("#stage").addEventListener("pointerdown", stagePointerDown);
+$("#stage").addEventListener("pointermove", stagePointerMove);
+$("#stage").addEventListener("pointerup", stagePointerUp);
+$("#stage").addEventListener("pointercancel", stageCancelDrag);
+// Escape has to be heard wherever the focus went when the drag started, so it
+// is bound on the window rather than the canvas.
+window.addEventListener("keydown", stageKeyDown);
 
 $("#copy-yaml").onclick = async () => {
   await navigator.clipboard.writeText($("#yaml code").textContent);

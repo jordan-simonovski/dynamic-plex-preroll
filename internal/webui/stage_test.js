@@ -32,6 +32,10 @@ function recordingCtx() {
     drawImage: (...a) => calls.push({ op: "drawImage", args: a }),
     measureText: (t) => ({ width: t.length * 10, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }),
     setLineDash: () => {}, save: () => {}, restore: () => {},
+    beginPath: () => calls.push({ op: "beginPath" }),
+    moveTo: (x, y) => calls.push({ op: "moveTo", args: [x, y] }),
+    lineTo: (x, y) => calls.push({ op: "lineTo", args: [x, y] }),
+    stroke: () => calls.push({ op: "stroke", stroke: ctx.strokeStyle, width: ctx.lineWidth }),
   };
   return ctx;
 }
@@ -114,7 +118,6 @@ function stageFetch() {
   return Promise.resolve({ ok: true, json: async () => fetchResponse });
 }
 
-
 const ctx = vm.createContext({
   document,
   window: { addEventListener() {}, devicePixelRatio: 2 },
@@ -128,7 +131,7 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "api.js", "stage.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 // `state` and `selection` are top-level `let`s, so they live in the context's
@@ -776,7 +779,6 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
     eq("remove-data: the drawn rows are the placeholders, not the stale library",
       stageLines(currentLayout().elements[0], currentScene())[0], PLACEHOLDER_NAME);
   }
-
 
   if (failures) {
     console.error(`\n${failures} check(s) failed`);

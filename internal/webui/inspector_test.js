@@ -37,6 +37,7 @@ function makeEl(sel) {
     querySelector: () => makeEl(),
     getContext: () => drawCtx,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 540 }),
+    setPointerCapture() {}, hasPointerCapture() { return false; }, releasePointerCapture() {},
     hasAttribute(a) { return this.attrs[a] !== undefined; },
     setAttribute(a, v) { this.attrs[a] = v; },
     toggleAttribute(a, on) { if (on) this.attrs[a] = ""; else delete this.attrs[a]; },
@@ -63,12 +64,16 @@ const ctx = vm.createContext({
   confirm: () => true,
   navigator: { clipboard: { writeText: async () => {} } },
   console,
+  // app.js is not loaded here (see below), so the one thing interact.js calls
+  // into it for is stubbed. Whether a gesture schedules exactly one convert is
+  // interact_test.js's assertion, not this file's.
+  scheduleConvert: () => {},
 });
 
 const staticDir = path.join(__dirname, "static");
 // app.js is left out on purpose: it boots the toolbar and the network. The
 // listeners it registers are thin — every decision they reach lives here.
-for (const f of ["providers.js", "util.js", "geometry.js", "state.js", "api.js", "stage.js", "inspector.js", "sections.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "inspector.js", "sections.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 vm.runInContext(`globalThis.__t = {
@@ -81,7 +86,8 @@ vm.runInContext(`globalThis.__t = {
   actions, rerenderHooks,
 };`, ctx);
 
-const { __t, inspectorTarget, elementPath, renderInspector, selectElement, selectAt,
+const { __t, inspectorTarget, elementPath, renderInspector, selectElement,
+  stagePointerDown, stagePointerUp,
   currentLayout } = ctx;
 const { actions, rerenderHooks } = ctx.__t;
 const panel = () => document.querySelector("#inspector").innerHTML;
@@ -321,10 +327,17 @@ const FIXTURE = () => ({
     __t.getState().scenes[0].layout, "main");
 }
 
-// ---- click to select -------------------------------------------------------
-// selectAt maps a client point through geometry.js onto the boxes the draw
-// left behind. The stub frame is 960 CSS px wide against a 1920px manifest, so
-// client coordinates are half of manifest ones.
+// ---- press to select -------------------------------------------------------
+// Selection is committed by interact.js's pointerdown, which maps a client
+// point through geometry.js onto the boxes the draw left behind. The stub
+// frame is 960 CSS px wide against a 1920px manifest, so client coordinates
+// are half of manifest ones. What is checked HERE is only that the panel
+// follows; the gesture itself is interact_test.js's job.
+const clickAt = (cx, cy) => {
+  const e = { clientX: cx, clientY: cy, pointerId: 1, preventDefault() {} };
+  stagePointerDown(e);
+  stagePointerUp(e);
+};
 {
   __t.setState({
     resolution: "1920x1080",
@@ -337,13 +350,13 @@ const FIXTURE = () => ({
   __t.select(0, null);
   ctx.renderStage(); // fills the box cache the hit test reads
 
-  selectAt(60, 98); // manifest (120, 196): inside "Hello" (y 192..202)
+  clickAt(60, 98); // manifest (120, 196): inside "Hello" (y 192..202)
   eq("click: a hit selects that element", __t.selected(), 0);
 
-  selectAt(60, 398); // manifest (120, 796): inside "Bye"
+  clickAt(60, 398); // manifest (120, 796): inside "Bye"
   eq("click: a second hit selects the other element", __t.selected(), 1);
 
-  selectAt(5, 5); // manifest (10, 10): empty canvas
+  clickAt(5, 5); // manifest (10, 10): empty canvas
   eq("click: empty canvas selects the scene", __t.selected(), null);
   eq("click: and the panel goes back to the scene", inspectorTarget().kind, "scene");
 }
