@@ -84,7 +84,7 @@ const ctx = vm.createContext({
 const staticDir = path.join(__dirname, "static");
 // app.js is left out on purpose: it boots the toolbar and the network. The
 // listeners it registers are thin — every decision they reach lives here.
-for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "inspector.js", "timeline.js", "sections.js"]) {
+for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state.js", "api.js", "stage.js", "pickers.js", "inspector.js", "timeline.js", "sections.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
 vm.runInContext(`globalThis.__t = {

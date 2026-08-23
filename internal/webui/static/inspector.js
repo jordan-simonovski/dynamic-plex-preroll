@@ -83,7 +83,7 @@ function elementInspector(base, el) {
   const back = `<button class="btn ghost" data-action="select-scene">← Scene</button>`;
   const common = `
     ${field("Font size", numInput(`${base}.size`, el.size))}
-    ${field("Colour", textInput(`${base}.color`, el.color, { placeholder: "white" }))}
+    ${colorField("Colour", `${base}.color`, el.color, "Blank means white")}
     ${field("Align", select(`${base}.align`, el.align ?? "", ["", "left", "center", "right"], { emptyLabel: "left (default)" }),
       "Where x anchors the text: its left edge, its centre, or its right edge")}`;
   if (el.type === "list") {
@@ -197,8 +197,8 @@ function layoutSection(sc) {
     </div>
     <div class="stack">
       ${field("Font file", textInput(`${base}.font`, layout.font, { placeholder: "media/common/MyFont.ttf" }))}
-      ${field("Background colour", textInput(`${base}.background.color`, layout.background?.color, { placeholder: "black, #101010, none" }),
-        `Use "none" for transparent — required for clip labels and dynamic backgrounds`)}
+      ${colorField("Background colour", `${base}.background.color`, layout.background?.color,
+        "Use none for transparent — required for clip labels and dynamic backgrounds")}
       ${field("Background image", textInput(`${base}.background.image`, layout.background?.image, { placeholder: "media/common/bg.png" }),
         "Wins over the colour when set")}
     </div>

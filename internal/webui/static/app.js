@@ -163,6 +163,11 @@ function onEditorInput(e) {
     setPath(state, path, coerce(e.target));
   }
   syncPath(path, e.target);
+  // A colour field's swatch is drawn from the same value the text input just
+  // took — refreshed in place (pickers.js), never via a full renderInspector()
+  // here, which would steal the cursor mid-keystroke (see the panel-focus
+  // comment in inspector.js).
+  if (e.target.dataset.colorText !== undefined) syncColorRow(path, e.target.value);
   // Only a data-source edit can change what the providers return; anything
   // else just redraws.
   if (path.startsWith("data.")) refreshStageData();
@@ -172,6 +177,19 @@ function onEditorInput(e) {
 
 function onEditorChange(e) {
   const t = e.target;
+  // The native picker writes into the text field, never around it: the text
+  // is the value and may hold things the picker cannot express (Pickers.
+  // toHexColor returns null for those, and colorField() never offers the
+  // picker on such a value in the first place beyond its last-known hex).
+  if (t.dataset.colorFor) {
+    const path = t.dataset.colorFor;
+    setPath(state, path, t.value);
+    syncPath(path, t);
+    renderInspector();
+    renderStage();
+    scheduleConvert();
+    return;
+  }
   if (t.dataset.actionToggle === "scene-bg") {
     const sc = state.scenes[+t.dataset.index];
     sc.background = t.checked
