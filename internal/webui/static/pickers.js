@@ -175,9 +175,13 @@ async function openFilePicker(path, kind) {
   }
   body.innerHTML = matching.map((f) => filePickerRow(f, kind)).join("");
   // A font can only be previewed in its own face once it is loaded, and each
-  // one needs its own @font-face. They are loaded lazily, per open dialog.
+  // one needs its own @font-face fetch. Unlike the image/audio previews above
+  // (loading="lazy", preload="none" — browser-native throttles), a font has
+  // no native lazy-load: previewing every match unconditionally would fire
+  // one full network fetch per font, all concurrent, the instant the dialog
+  // opens. FONT_PREVIEW_CAP bounds that fan-out; see previewFont's comment.
   if (kind === "font") {
-    for (const f of matching) previewFont(f.path);
+    for (const f of matching.slice(0, FONT_PREVIEW_CAP)) previewFont(f.path);
   }
 }
 
@@ -186,6 +190,15 @@ async function openFilePicker(path, kind) {
 // than a filename to guess from. Cached by path: reopening the dialog (or
 // browsing the same font field twice) must not re-request and re-decode a
 // file already sitting in document.fonts.
+//
+// ponytail: FONT_PREVIEW_CAP is a flat cap, not IntersectionObserver-driven
+// lazy loading — this is a local admin tool listing a user's own media
+// directory, not a hostile input, and a directory big enough to blow past 24
+// fonts is unusual. Rows beyond the cap simply render in the default face,
+// the same degradation previewFont's own catch already gives an unreadable
+// font. Swap in IntersectionObserver (load on scroll into view) if real
+// directories start regularly exceeding the cap.
+const FONT_PREVIEW_CAP = 24;
 const previewFonts = new Map();
 function previewFont(path) {
   const apply = (family) => {
