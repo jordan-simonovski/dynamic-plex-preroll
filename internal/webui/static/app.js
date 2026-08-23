@@ -68,14 +68,12 @@ async function renderToolbar() {
 }
 
 async function loadManifest(name) {
-  let m;
   try {
-    m = await apiGetManifest(name);
+    replaceState(await apiGetManifest(name));
   } catch (err) {
     flash(`Could not load ${name}: ${err.message}`, true);
     return;
   }
-  replaceState(m);
   openedFile = name;
   renderAll();
   convert();
