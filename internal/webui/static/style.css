@@ -190,3 +190,26 @@ input[type="checkbox"] { width: auto; }
 .element-row.selected { border-color: var(--accent); }
 .element-row .kind { color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .element-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- phase 2: the timeline rail ------------------------------------------
+   Deviation from the Task 10 brief: it proposes a `.rail h2 { color:
+   var(--accent) }` rule, but `.rail h2, .inspector h2` (above, from Task 6)
+   already styles the rail's heading the same muted way as the inspector's —
+   adding a second, conflicting rule here would just fork that styling for no
+   reason, so it is left alone. */
+.scene-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.scene-card {
+  display: grid; grid-template-areas: "num kind" "sum sum" "secs secs";
+  grid-template-columns: auto 1fr; align-content: start; gap: 2px 6px;
+  width: 100%; text-align: left; cursor: grab;
+  background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; color: var(--text); font: inherit; overflow: hidden;
+}
+.scene-card.selected { border-color: var(--accent); border-left-color: var(--accent); }
+.scene-card.drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.scene-card .scene-num { grid-area: num; font-weight: 600; color: var(--accent); }
+.scene-card .scene-kind { grid-area: kind; font-size: 11px; text-transform: uppercase; color: var(--muted); }
+.scene-card .scene-summary { grid-area: sum; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-card .scene-secs { grid-area: secs; align-self: end; font-size: 11px; color: var(--muted); }
+.rail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rail-actions .btn { flex: 1 1 auto; padding: 6px 8px; font-size: 12px; }

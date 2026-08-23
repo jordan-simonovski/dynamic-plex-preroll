@@ -202,9 +202,10 @@ function onEditorClick(e) {
   scheduleConvert();
 }
 
-// The inspector uses the same data-path/data-action conventions as the phase-1
-// form, so it gets the same three delegated listeners rather than its own.
-for (const root of ["#editor", "#inspector"]) {
+// The inspector and the timeline rail use the same data-path/data-action
+// conventions as the phase-1 form, so they get the same three delegated
+// listeners rather than their own.
+for (const root of ["#editor", "#inspector", "#rail"]) {
   const el = $(root);
   el.addEventListener("input", onEditorInput);
   el.addEventListener("change", onEditorChange);
