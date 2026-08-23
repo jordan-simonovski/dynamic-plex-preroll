@@ -11,6 +11,14 @@
 // `error` event, fired by the browser itself when a superseded file 404s).
 
 const RENDER_POLL_MS = 1000;
+// How many CONSECUTIVE failed status requests it takes to declare a render
+// lost. A render takes minutes; a dropped request in the middle of that is
+// usually a blip (a laptop's wifi, the server restarting), and giving up on
+// the first one leaves nothing asking about a subprocess that is still going.
+// Bounded, and the cadence is unchanged: resilience, not aggression.
+const RENDER_POLL_MAX_FAILURES = 5;
+// Where the running job's id is parked so a page reload can find it again.
+const RENDER_JOB_KEY = "preroll-ui.render-job";
 
 let renderPollTimer = null;
 
@@ -34,6 +42,21 @@ function startView(res) {
 // shown verbatim rather than turned into an invented percentage.
 function nextRenderView(job) {
   if (job.kind === "poll-error") {
+    // job.attempt is the count of CONSECUTIVE failures including this one.
+    // Below the ceiling the render is still assumed alive and polling
+    // continues (button stays disabled, log untouched); at or above it the
+    // job is declared lost. A poll-error with no attempt count is treated as
+    // exhausted — fail closed, same spirit as the unknown-state branch below.
+    // A 404 (this job was superseded by a newer render) lands here too: it is
+    // indistinguishable from a dropped request without inspecting the status
+    // code, and the cost of not distinguishing them is a few seconds' delay
+    // before the same "lost track" message.
+    if (job.attempt < RENDER_POLL_MAX_FAILURES) {
+      return {
+        status: `Lost contact with the render — retrying (${job.attempt}/${RENDER_POLL_MAX_FAILURES})`,
+        isError: false, buttonDisabled: true, keepPolling: true, log: undefined, showVideo: false,
+      };
+    }
     return { status: `Lost track of the render: ${job.message}`, isError: true, buttonDisabled: false, keepPolling: false, log: undefined, showVideo: false };
   }
   if (job.state === "running") {
@@ -65,7 +88,60 @@ function nextRenderView(job) {
   };
 }
 
+// pollStep folds one poll outcome and the running failure count into the view
+// to show and the count to carry forward. It exists so the whole retry budget
+// — a blip, a recovery resetting it, and the exhaustion that ends the job — is
+// one pure function a headless test can drive with a sequence of responses,
+// rather than arithmetic buried in a setTimeout.
+function pollStep(outcome, failures) {
+  if (outcome.kind === "poll-error") {
+    const attempt = failures + 1;
+    return { view: nextRenderView({ ...outcome, attempt }), failures: attempt };
+  }
+  // Any answer from the server, whatever it says, means contact is back.
+  return { view: nextRenderView(outcome), failures: 0 };
+}
+
 // ---- DOM glue ----------------------------------------------------------------
+
+// The stored job id survives a reload; localStorage can throw outright (private
+// browsing, site data blocked), and a render preview is not worth taking the
+// page down for, so both directions swallow it.
+function rememberRenderJob(id) {
+  try {
+    if (id) localStorage.setItem(RENDER_JOB_KEY, id);
+    else localStorage.removeItem(RENDER_JOB_KEY);
+  } catch { /* no storage: reattach is simply unavailable */ }
+}
+function rememberedRenderJob() {
+  try {
+    return localStorage.getItem(RENDER_JOB_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+// resumeRenderJob reattaches to a render that was running when the page was
+// reloaded. A stored id that the server no longer knows — a finished-and-
+// superseded job, a restarted server, a stale id from days ago — 404s, and
+// that is NOT an error worth a banner on a fresh page load: there is simply
+// nothing to resume, so it is forgotten silently. Only a live answer opens the
+// panel.
+async function resumeRenderJob() {
+  const id = rememberedRenderJob();
+  if (!id) return;
+  let job;
+  try {
+    job = await apiRenderStatus(id);
+  } catch {
+    rememberRenderJob(""); // unknown id: nothing to resume, nothing to say
+    return;
+  }
+  $("#render-panel").hidden = false;
+  const view = nextRenderView(job);
+  applyRenderView(view); // clears the stored id if this is already terminal
+  if (view.keepPolling) pollRenderJob(id);
+}
 
 // renderRenderControls draws the toolbar button, or nothing at all when this
 // deployment has no renderer — an always-visible button that always fails is
@@ -88,6 +164,10 @@ function renderRenderControls(caps) {
     video.hidden = true;
     setRenderStatus("This render's video is no longer available — a newer render replaced it.", true);
   };
+  // A render survives the page that started it, so pick one up if we reloaded
+  // mid-render. Last, so the panel it may fill is fully wired first; and
+  // fire-and-forget, because nothing here depends on the outcome.
+  resumeRenderJob();
 }
 
 async function startRenderJob() {
@@ -107,29 +187,38 @@ async function startRenderJob() {
   const view = startView(res);
   setRenderStatus(view.status, view.isError);
   if (btn) btn.disabled = view.buttonDisabled;
-  if (view.startPolling) pollRenderJob(view.startPolling);
+  if (view.startPolling) {
+    rememberRenderJob(view.startPolling); // so a reload can find this render again
+    pollRenderJob(view.startPolling);
+  }
 }
 
-function pollRenderJob(id) {
+// failures is the count of consecutive failed status requests carried between
+// ticks; a good answer resets it (pollStep), so only an unbroken run of
+// failures ends the job.
+function pollRenderJob(id, failures = 0) {
   clearTimeout(renderPollTimer);
   renderPollTimer = setTimeout(async () => {
-    let job;
+    let outcome;
     try {
-      job = await apiRenderStatus(id);
+      outcome = await apiRenderStatus(id);
     } catch (err) {
-      applyRenderView(nextRenderView({ kind: "poll-error", message: err.message }));
-      return; // polling stops: nothing left to ask about a request that itself failed
+      outcome = { kind: "poll-error", message: err.message };
     }
     // keepPolling IS the decision — re-deriving it from job.state here would
     // be a second copy of the state machine, free to disagree with the one the
     // tests pin.
-    const view = nextRenderView(job);
-    applyRenderView(view);
-    if (view.keepPolling) pollRenderJob(id);
+    const step = pollStep(outcome, failures);
+    applyRenderView(step.view);
+    if (step.view.keepPolling) pollRenderJob(id, step.failures);
   }, RENDER_POLL_MS);
 }
 
 function applyRenderView(view) {
+  // Every terminal state forgets the job: there is nothing left to reattach
+  // to, and a stored id outliving its job is what would make the next reload
+  // ask about a render that is over.
+  if (!view.keepPolling) rememberRenderJob("");
   setRenderStatus(view.status, view.isError);
   if (view.log !== undefined) $("#render-log").textContent = view.log;
   const btn = $("#btn-render");
@@ -151,5 +240,5 @@ function setRenderStatus(text, isError = false) {
 // Node: exported for renderjob_test.js. Browser: the functions above are
 // already global from the classic script.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { startView, nextRenderView };
+  module.exports = { startView, nextRenderView, pollStep, RENDER_POLL_MAX_FAILURES };
 }
