@@ -101,10 +101,19 @@ class Image {
 // call it when there are no data sources).
 let fetchCalls = 0;
 let fetchResponse = { configured: false, sources: {} };
+// `parked`, when an array, holds each in-flight reply so a test can answer
+// them OUT OF ORDER — the whole point of refreshStageDataNow's sequence guard.
+let parked = null;
 function stageFetch() {
   fetchCalls++;
+  if (parked) {
+    return new Promise((resolve) => {
+      parked.push((body) => resolve({ ok: true, json: async () => body }));
+    });
+  }
   return Promise.resolve({ ok: true, json: async () => fetchResponse });
 }
+
 
 const ctx = vm.createContext({
   document,
@@ -133,6 +142,7 @@ vm.runInContext(`globalThis.__t = {
   stageDataReason: () => stageDataReason,
   selectElement: (i) => { selection.element = i; },
   selectedElement: () => selection.element,
+  placeholderName: () => PLACEHOLDER_ITEMS[0].name,
 };`, ctx);
 
 // ---- assertions ------------------------------------------------------------
@@ -147,8 +157,11 @@ const eq = (name, got, want) => check(name, got === want, `got ${JSON.stringify(
 const { __t, stageTemplate, stageLines, stageVars, stageCanvasSize, stageFontSpec,
   safeColor, stageNotes, stageLabelText, setStageData, renderStage, stageMeasure,
   manifestDimensions, currentScene, currentLayout, currentLayoutName,
-  refreshStageDataNow, stageItems } = ctx;
+  refreshStageDataNow, stageItems, stagePlaceholderSources } = ctx;
 const Geometry = ctx.__t.Geometry;
+// The first placeholder item's name, so the "this fell back" assertions do
+// not hardcode a string stage.js owns.
+const PLACEHOLDER_NAME = __t.placeholderName();
 
 // manifestDimensions: a half-typed resolution must not collapse the stage.
 {
@@ -701,6 +714,69 @@ const texts = (calls) => calls.filter((c) => c.op === "fillText");
   eq("resolve: a configured reply's items replace the placeholders", stageItems("top").length, 1);
   eq("resolve: a configured reply's item is passed through", stageItems("top")[0].name, "Heat");
   eq("resolve: a configured reply's vars are exposed", stageVars({ kind: "render" }).Period, "Year");
+
+  // Fix (a): refreshStageDataNow is fired by the debounce AND directly by
+  // boot/New/Open/Delete, so two resolves can be in flight. A slow reply for
+  // the manifest that was open a moment ago must not land on top of the
+  // current one's data — the replies are keyed by source NAME, and a new
+  // manifest reuses names.
+  {
+    __t.setState({ data: { top: { provider: "plex.top", params: {} } }, layouts: {}, scenes: [] });
+    parked = [];
+    const first = refreshStageDataNow();
+    const second = refreshStageDataNow();
+    eq("resolve: two refreshes in flight", parked.length, 2);
+    parked[1]({ configured: true, sources: { top: { items: [{ rank: 1, name: "NEW" }] } } });
+    await second;
+    parked[0]({ configured: true, sources: { top: { items: [{ rank: 1, name: "OLD" }] } } });
+    await first;
+    eq("resolve: a stale reply is ignored", stageItems("top")[0].name, "NEW");
+
+    // Emptying the data map (New / Delete / removing the last source) has to
+    // invalidate an in-flight resolve too, not merely return early.
+    parked = [];
+    const inflight = refreshStageDataNow();
+    __t.setState({ data: {}, layouts: {}, scenes: [] });
+    await refreshStageDataNow();
+    parked[0]({ configured: true, sources: { top: { items: [{ rank: 1, name: "GHOST" }] } } });
+    await inflight;
+    __t.setState({ data: { top: { provider: "plex.top", params: {} } }, layouts: {}, scenes: [] });
+    eq("resolve: emptying the data map invalidates what is in flight",
+      stageItems("top")[0].name, PLACEHOLDER_NAME);
+    parked = null;
+  }
+
+  // Fix (b): removing a data source must not leave its last REAL items on the
+  // stage. Before this, the entry stayed in stageData.sources, so a list still
+  // naming it kept drawing yesterday's library AND stageResolved() called it
+  // resolved, so the placeholder note said nothing either.
+  {
+    __t.setState({
+      data: { top: { provider: "plex.top", params: {} } },
+      layouts: { l: { font: "", background: {}, elements: [{ type: "list", source: "top", x: 0, startY: 100, stepY: 50, size: 40, item: "{{ .Name }}" }] } },
+      scenes: [{ kind: "render", layout: "l" }],
+    });
+    __t.select(0);
+    setStageData({ vars: {}, sources: { top: { items: [{ rank: 1, name: "Real Movie", views: 3 }] } } });
+    eq("remove-data: real items while the source exists", stageItems("top")[0].name, "Real Movie");
+    eq("remove-data: nothing to disclose while it exists",
+      stagePlaceholderSources(currentScene(), currentLayout()).length, 0);
+
+    // Exactly what actions["remove-data"] does to the state.
+    __t.setState({
+      data: {},
+      layouts: { l: { font: "", background: {}, elements: [{ type: "list", source: "top", x: 0, startY: 100, stepY: 50, size: 40, item: "{{ .Name }}" }] } },
+      scenes: [{ kind: "render", layout: "l" }],
+    });
+    __t.select(0);
+    eq("remove-data: the removed source falls back to placeholders",
+      stageItems("top")[0].name, PLACEHOLDER_NAME);
+    eq("remove-data: and the note names it",
+      stagePlaceholderSources(currentScene(), currentLayout()).join(), "top");
+    eq("remove-data: the drawn rows are the placeholders, not the stale library",
+      stageLines(currentLayout().elements[0], currentScene())[0], PLACEHOLDER_NAME);
+  }
+
 
   if (failures) {
     console.error(`\n${failures} check(s) failed`);
