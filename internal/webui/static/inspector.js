@@ -449,10 +449,21 @@ actions["add-param"] = (d) => {
   renderInspector();
 };
 actions["remove-param"] = (d) => { delete state.data[d.ds].params[d.key]; renderInspector(); };
+// testDataSeq is app.js's convertSeq / stage.js's stageDataSeq pattern, keyed
+// by SOURCE NAME. "Test this source" runs the real provider against Plex, which
+// is slow and answers out of order, and edit-then-retest is the normal way to
+// use it — so two resolves for the same source can be in flight with different
+// parameters. They land keyed by name, so the older reply would overwrite the
+// newer one and the table would show results for parameters that are no longer
+// configured, with nothing saying so. Per name rather than one global counter:
+// testing a different source meanwhile is legitimate and must not be discarded.
+const testDataSeq = {};
 actions["test-data"] = async (d) => {
+  const seq = testDataSeq[d.name] = (testDataSeq[d.name] || 0) + 1;
   testResults[d.name] = { pending: true };
   renderInspector();
   const out = await apiResolveData({ [d.name]: state.data[d.name] });
+  if (seq !== testDataSeq[d.name]) return; // a newer test of this source has answered
   const src = (out.sources || {})[d.name] || { items: [] };
   testResults[d.name] = out.configured
     ? { items: src.items || [], error: src.error || "" }
