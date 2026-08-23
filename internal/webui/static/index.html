@@ -1,1 +1,35 @@
-<!doctype html><title>Pre-roll Studio</title><p>UI lands in Task 4.</p>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pre-roll Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Pre-roll <span>Studio</span></h1>
+  <div class="topbar-actions" id="manifest-actions"></div>
+  <span id="status"></span>
+</header>
+<main class="split">
+  <div class="editor" id="editor">
+    <section class="card" id="section-general"></section>
+    <section class="card" id="section-audio"></section>
+    <section class="card" id="section-data"></section>
+    <section class="card" id="section-layouts"></section>
+    <section class="card" id="section-scenes"></section>
+  </div>
+  <aside class="preview">
+    <div class="preview-head">
+      <h2>manifest.yaml</h2>
+      <button id="copy-yaml" class="btn ghost">Copy</button>
+    </div>
+    <ul id="errors" class="errors"></ul>
+    <pre id="yaml"><code></code></pre>
+  </aside>
+</main>
+<script src="providers.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
