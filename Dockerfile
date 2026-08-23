@@ -43,20 +43,12 @@ RUN cd && \
 WORKDIR /build
 COPY . .
 
+# Two binaries out of one stage. plex-pre-rolls needs CGO for ImageMagick;
+# preroll-ui is built CGO-free on purpose — it never links the renderer, it
+# executes it, which is why one image can serve both roles.
 RUN CGO_CFLAGS_ALLOW='-Xpreprocessor' GOOS=linux GOARCH=$BUILDARCH \
 	&& go mod download \
-    && go build ./cmd/plex-pre-rolls
+	&& go build -o /usr/local/bin/plex-pre-rolls ./cmd/plex-pre-rolls \
+	&& CGO_ENABLED=0 go build -o /usr/local/bin/preroll-ui ./cmd/preroll-ui
 
-CMD ["./plex-pre-rolls"]
-
-# ---- preroll-ui: browser-based manifest editor --------------------------------
-# Pure-Go HTTP server; no ImageMagick/ffmpeg, so this stays small and fast.
-FROM golang:1.26 AS preroll-ui
-
-WORKDIR /build
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /usr/local/bin/preroll-ui ./cmd/preroll-ui
-
-ENTRYPOINT ["preroll-ui"]
+CMD ["plex-pre-rolls"]
