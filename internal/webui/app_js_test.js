@@ -278,9 +278,58 @@ function check(name, cond, detail) {
   const obj = { data: { "top.movies": { params: {} } } };
   check("getPath: a dotted key is unreachable",
     getPath(obj, "data.top.movies.params") === undefined);
+  // setPath used to walk into undefined and throw a TypeError from inside the
+  // input handler — the edit vanished with nothing shown. It must report and
+  // leave the state alone instead.
+  flashes.length = 0;
   let threw = false;
-  try { setPath(obj, "data.top.movies.params.x", 1); } catch { threw = true; }
-  check("setPath: a dotted key throws", threw);
+  let wrote = null;
+  try { wrote = setPath(obj, "data.top.movies.params.x", 1); } catch { threw = true; }
+  check("setPath: an unaddressable path does not throw into the event handler", !threw);
+  check("setPath: an unaddressable path reports it did not write", wrote === false);
+  check("setPath: an unaddressable path flashes an error",
+    flashes.length === 1 && flashes[0].isError === true, JSON.stringify(flashes));
+  check("setPath: an unaddressable path leaves the object untouched",
+    JSON.stringify(obj) === '{"data":{"top.movies":{"params":{}}}}', JSON.stringify(obj));
+  // The ordinary case still writes, and says so.
+  flashes.length = 0;
+  const ok = { a: { b: {} } };
+  check("setPath: a reachable path still writes", setPath(ok, "a.b.c", 7) === true && ok.a.b.c === 7);
+  check("setPath: a reachable path flashes nothing", flashes.length === 0);
+}
+
+// replaceState: a manifest that already carries a dotted key cannot be edited
+// safely, so it is refused at the door rather than opened and silently losing
+// the first edit to that key. Finding #9.
+{
+  const { replaceState } = ctx;
+  const good = { name: "keep-me", data: {}, layouts: {}, scenes: [] };
+  const cases = [
+    ["a dotted data-source name", { data: { "top.movies": { provider: "plex.top", params: {} } } }, /top\.movies/],
+    ["a dotted provider param", { data: { top: { provider: "plex.top", params: { "max.items": 5 } } } }, /max\.items/],
+    ["a dotted layout name", { layouts: { "title.card": { elements: [] } } }, /title\.card/],
+    ["a dotted scene var", { scenes: [{ kind: "render", layout: "t", vars: { "my.var": "x" } }] }, /my\.var/],
+  ];
+  for (const [what, bad, mentions] of cases) {
+    ctx.__t.setState(ctx.normalize(good));
+    flashes.length = 0;
+    const accepted = replaceState({ name: "dotted", data: {}, layouts: {}, scenes: [], ...bad });
+    check(`replaceState: ${what} is refused`, accepted === false, String(accepted));
+    check(`replaceState: ${what} leaves the open manifest alone`,
+      ctx.__t.getState().name === "keep-me", ctx.__t.getState().name);
+    check(`replaceState: ${what} flashes an error naming the key`,
+      flashes.length === 1 && flashes[0].isError === true && mentions.test(flashes[0].msg),
+      JSON.stringify(flashes));
+  }
+  // The mutation check: an ordinary manifest must still open, and every
+  // shipped manifest is ordinary.
+  flashes.length = 0;
+  const accepted = replaceState({ name: "plain", data: { top: { provider: "plex.top", params: { limit: 5 } } },
+    layouts: { title: { elements: [] } }, scenes: [{ kind: "render", layout: "title", vars: { Var: "x" } }] });
+  check("replaceState: a manifest with no dotted key still opens", accepted === true);
+  check("replaceState: opening a clean manifest flashes nothing", flashes.length === 0, JSON.stringify(flashes));
+  check("replaceState: opening a clean manifest actually swaps the state",
+    ctx.__t.getState().name === "plain", ctx.__t.getState().name);
 }
 
 // syncPath: the inspector and the General card bind the same paths, and typing

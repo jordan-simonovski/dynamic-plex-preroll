@@ -116,8 +116,10 @@ async function startFromTemplate(name) {
   }
   m.name = "";
   m.output = "";
+  // Refused (an unaddressable dotted key): keep the editor — and openedFile —
+  // exactly as they were. replaceState has already said which key it was.
+  if (!replaceState(m)) return;
   openedFile = "";
-  replaceState(m);
   $("#new-picker").close();
   $("#manifest-picker").value = "";
   renderAll();
@@ -163,12 +165,14 @@ async function renderToolbar() {
 }
 
 async function loadManifest(name) {
+  let m;
   try {
-    replaceState(await apiGetManifest(name));
+    m = await apiGetManifest(name);
   } catch (err) {
     flash(`Could not load ${name}: ${err.message}`, true);
     return;
   }
+  if (!replaceState(m)) return; // refused: replaceState already said why
   openedFile = name;
   renderAll();
   refreshStageDataNow(); // replaceState() bypasses onStateChange

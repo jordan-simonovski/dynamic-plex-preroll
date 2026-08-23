@@ -9,11 +9,23 @@ const $ = (sel) => document.querySelector(sel);
 function getPath(obj, path) {
   return path.split(".").reduce((cur, k) => cur?.[k], obj);
 }
+// A missing intermediate key means the path and the state have drifted apart
+// (the classic cause: a key containing a dot, which splits into steps that do
+// not exist). Report it and leave the state alone — walking on would throw a
+// TypeError inside an input handler, where nothing catches it and the user's
+// keystroke vanishes with no explanation. Returns whether the write happened.
 function setPath(obj, path, value) {
   const keys = path.split(".");
   let cur = obj;
-  for (const k of keys.slice(0, -1)) cur = cur[k];
+  for (const k of keys.slice(0, -1)) {
+    cur = cur?.[k];
+    if (cur == null || typeof cur !== "object") {
+      flash(`Could not update ${path} — the editor cannot address that field`, true);
+      return false;
+    }
+  }
   cur[keys.at(-1)] = value;
+  return true;
 }
 function coerce(input) {
   if (input.dataset.type === "number") {
