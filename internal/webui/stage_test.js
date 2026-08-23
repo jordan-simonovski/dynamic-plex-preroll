@@ -144,6 +144,11 @@ for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state
 // is stageKeyNav's OWN sequencing, not inspector.js's rendering.
 vm.runInContext(`globalThis.__spy = { inspector: 0, converts: 0 };
 globalThis.renderInspector = () => { __spy.inspector++; };
+// stageKeyNav routes its selection changes through inspector.js's
+// selectElement (the one place a deliberate selection change repaints both
+// views); this file does not load inspector.js, so it stands in with the same
+// three lines that function has.
+globalThis.selectElement = (i) => { selection.element = i; renderStage(); renderInspector(); };
 globalThis.scheduleConvert = () => { __spy.converts++; };
 globalThis.__t = {
   setState: (s) => { state = normalize(s); },

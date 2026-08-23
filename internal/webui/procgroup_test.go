@@ -24,7 +24,10 @@ func TestRenderTimeoutKillsGrandchildren(t *testing.T) {
 	// pipe would make this a test of WaitDelay instead. `exec` in the
 	// foreground half is why the shell itself is not a second stray.
 	ts, s := renderServer(t, "#!/bin/sh\nsleep 60 >/dev/null 2>&1 &\necho \"grandchild $!\"\nexec sleep 60\n")
-	s.RenderTimeout = 200 * time.Millisecond
+	// A full second, not the 200ms the sibling timeout test uses: the stub has
+	// to actually get through fork/exec and echo its pid before the deadline,
+	// and on a loaded machine 200ms is not reliably enough for that.
+	s.RenderTimeout = time.Second
 
 	res := do(t, "POST", ts.URL+"/api/render", validJSON)
 	var started struct {
