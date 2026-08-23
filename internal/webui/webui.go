@@ -34,9 +34,24 @@ const maxBody = 1 << 20
 var nameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*\.(yaml|yml)$`)
 
 // Server is the config UI's HTTP server. ManifestDir is where manifests are
-// listed, loaded, saved, and deleted.
+// listed, loaded, saved, and deleted. Everything else is optional: each unset
+// field simply switches its feature off, so the editor runs with nothing but
+// a manifest directory.
 type Server struct {
 	ManifestDir string
+	// MediaDirs are the roots the file picker may enumerate and serve from.
+	// Nothing outside them is ever readable through the API.
+	MediaDirs []string
+	// RenderBin is the path to the plex-pre-rolls binary. Empty (or not
+	// executable) hides the render button.
+	RenderBin string
+	// RenderDir holds render scratch: the generated manifest and the mp4. It
+	// is deliberately NOT the manifest directory, which the batch renderer globs.
+	RenderDir string
+	// WorkDir is the working directory render subprocesses run in, so relative
+	// manifest paths (media/common/Font.ttf) resolve the same way they do for a
+	// batch run. Empty means the UI process's own directory.
+	WorkDir string
 }
 
 // Handler returns the full route table: the JSON API under /api and the
@@ -44,6 +59,7 @@ type Server struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/convert", s.convert)
+	mux.HandleFunc("GET /api/capabilities", s.capabilities)
 	mux.HandleFunc("GET /api/manifests", s.list)
 	mux.HandleFunc("GET /api/manifests/{name}", s.get)
 	mux.HandleFunc("PUT /api/manifests/{name}", s.save)
