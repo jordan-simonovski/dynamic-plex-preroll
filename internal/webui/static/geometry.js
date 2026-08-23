@@ -166,6 +166,17 @@ const Geometry = {
     };
   },
 
+  // nudge is an arrow-key move: the same patch shape as a drag, but rounded to
+  // whole pixels so ten presses of "right" move exactly ten pixels rather than
+  // accumulating a fractional offset the way moveTo's one-decimal rounding
+  // would across many small steps.
+  nudge(el, dx, dy) {
+    if (el.type === "list") {
+      return { x: Math.round((el.x || 0) + dx), startY: Math.round((el.startY || 0) + dy) };
+    }
+    return { x: Math.round((el.x || 0) + dx), y: Math.round((el.y || 0) + dy) };
+  },
+
   // Resizing changes the font size, the only size the DSL has. The scale
   // factor is how much taller the box got, so the drag feels proportional.
   //

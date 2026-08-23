@@ -279,6 +279,7 @@ function renderStage() {
   if ($("#toggle-safe")?.checked) drawSafeArea(ctx, dims.width, dims.height);
 
   updateStageChrome(scene, layout);
+  canvas.setAttribute("aria-label", stageDescription());
 }
 
 // Draw order is render.go's: the background is built first and the elements are
@@ -609,3 +610,118 @@ function updateStageChrome(scene, layout) {
 
 // The stage is sized from its container, so a window resize must redraw it.
 window.addEventListener("resize", debounce(renderStage, 100));
+
+// ---- keyboard ----------------------------------------------------------------
+// The canvas is focusable (index.html's tabindex="0") and click-to-select
+// focuses it explicitly (see interact.js's stagePointerDown for why that has
+// to be explicit rather than relying on the default mousedown focus). Once
+// focused, Tab/Shift+Tab step through the layout's elements, arrows nudge the
+// selected one (Shift for a coarse step), Delete removes it, Escape drops
+// back to the scene.
+//
+// stageKeyAction is the whole decision, pure: no DOM, no globals, just the key
+// event's shape plus the current selection — which is what makes it drivable
+// from plain `node` with synthetic {key, shiftKey} objects
+// (internal/webui/stage_test.js). It returns null for any key this widget
+// does not claim, and that "null falls through" rule is also the fix for a
+// keyboard trap the Task 11 brief's own sample code had: that code always
+// called preventDefault() on Tab regardless of direction or position, and
+// with role="application" making the canvas a single Tab stop, a keyboard
+// user who tabbed onto any scene with elements could then never Tab back OUT
+// again (a WCAG 2.1.2 violation). Here, Tab past the last element — or
+// Shift+Tab before the first, or with nothing selected — returns null and is
+// left alone, so it moves on to the next focusable control exactly like
+// leaving any other widget.
+const STAGE_NUDGE_STEP = 1;
+const STAGE_NUDGE_STEP_COARSE = 10;
+
+function stageKeyAction(e, selectedIndex, elementCount) {
+  if (elementCount <= 0) return null; // nothing to select, cycle or nudge
+  if (e.key === "Tab") {
+    const current = selectedIndex == null ? -1 : selectedIndex;
+    if (e.shiftKey) {
+      if (current <= 0) return null; // nothing selected, or already first: leave backward
+      return { type: "select", index: current - 1 };
+    }
+    if (current === elementCount - 1) return null; // already last: leave forward
+    return { type: "select", index: current + 1 }; // -1 -> 0: nothing selected selects the first
+  }
+  if (e.key === "Escape") return selectedIndex == null ? null : { type: "deselect" };
+  if (selectedIndex == null) return null; // nothing else applies without a selection
+  if (e.key === "Delete" || e.key === "Backspace") return { type: "delete" };
+  const step = e.shiftKey ? STAGE_NUDGE_STEP_COARSE : STAGE_NUDGE_STEP;
+  const deltas = {
+    ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+    ArrowUp: [0, -step], ArrowDown: [0, step],
+  }[e.key];
+  return deltas ? { type: "nudge", dx: deltas[0], dy: deltas[1] } : null;
+}
+
+// stageKeyNav is the DOM glue: it turns stageKeyAction's decision into the
+// same effects a mouse gesture already has — selectElement()'s render pair,
+// or Geometry.nudge() applied through the identical patch shape a drag
+// commits (interact.js's header comment). Bound to #stage's own "keydown",
+// not window's, so it only ever runs while the canvas actually has focus.
+//
+// Deviation from the Task 11 brief: it names this function stageKeyDown, but
+// interact.js already defines a top-level stageKeyDown (Escape-cancels-a-
+// drag, bound on window — loaded before this file). Classic <script> tags
+// share one global scope, so redeclaring that name here would silently
+// shadow interact.js's version everywhere it is referenced BY NAME — app.js's
+// window.addEventListener("keydown", stageKeyDown) and
+// internal/webui/interact_test.js's destructured stageKeyDown would both
+// start calling this function instead, breaking Escape-cancels-a-drag with
+// no error anywhere. Named this one stageKeyNav instead.
+function stageKeyNav(e) {
+  // While a drag is in flight, interact.js's window-bound stageKeyDown owns
+  // Escape (it reverts the drag). Returning here without calling
+  // preventDefault lets the keydown keep bubbling to that handler instead of
+  // the two fighting over the same press — safe because Task 9/11's focus fix
+  // means the canvas is exactly where a drag's keydowns land in the first
+  // place.
+  if (stageDrag) return;
+  const layout = currentLayout();
+  const action = stageKeyAction(e, selection.element, layout ? (layout.elements || []).length : 0);
+  if (!action) return;
+  e.preventDefault();
+  if (action.type === "select") {
+    selection.element = action.index;
+    renderStage();
+    renderInspector();
+  } else if (action.type === "deselect") {
+    selection.element = null;
+    renderStage();
+    renderInspector();
+  } else if (action.type === "delete") {
+    layout.elements.splice(selection.element, 1);
+    selection.element = null;
+    onStateChange();
+  } else if (action.type === "nudge") {
+    const el = layout.elements[selection.element];
+    Object.assign(el, Geometry.nudge(el, action.dx, action.dy));
+    renderStage();
+    renderInspector();
+    scheduleConvert();
+  }
+}
+
+// stageDescription is what a screen reader is told the canvas contains. A
+// canvas is otherwise a blank rectangle to assistive technology, and this is
+// the only place the scene's actual content is described — it is what
+// renderStage() sets as #stage's aria-label on every redraw.
+function stageDescription() {
+  const scene = currentScene();
+  if (!scene) return "Scene preview: no scenes yet";
+  const layout = currentLayout();
+  const parts = [`Scene ${selection.sceneIndex + 1} of ${state.scenes.length}, kind ${scene.kind}`];
+  if (layout) {
+    const els = layout.elements || [];
+    parts.push(`${els.length} element${els.length === 1 ? "" : "s"}`);
+    if (selection.element != null && els[selection.element]) {
+      const el = els[selection.element];
+      const anchor = el.type === "list" ? `x ${el.x}, first row ${el.startY}` : `x ${el.x}, y ${el.y}`;
+      parts.push(`selected: ${el.type} element at ${anchor}, size ${el.size}`);
+    }
+  }
+  return parts.join(". ");
+}

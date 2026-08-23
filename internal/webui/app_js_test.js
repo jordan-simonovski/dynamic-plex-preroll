@@ -20,7 +20,9 @@ const vm = require("vm");
 // stage_test.js, and here it only has to boot without a browser.
 const canvasStub = new Proxy({ fillStyle: "", font: "" }, { get: (t, k) => (k in t ? t[k] : () => ({ width: 0 })) });
 function makeEl() {
+  const attrs = {};
   return {
+    attrs,
     innerHTML: "", textContent: "", value: "", checked: false,
     clientWidth: 800, width: 0, height: 0, style: {},
     dataset: {}, options: [],
@@ -28,6 +30,13 @@ function makeEl() {
     addEventListener() {}, appendChild() {}, closest() { return null; },
     querySelector: () => makeEl(),
     getContext: () => canvasStub,
+    // Task 11 needs the stage's aria-label kept current, and the tabindex/
+    // role attributes it sets on boot; a no-op setAttribute stub is enough
+    // for this file, which only has to boot without throwing.
+    hasAttribute(a) { return attrs[a] !== undefined; },
+    setAttribute(a, v) { attrs[a] = v; },
+    toggleAttribute(a, on) { if (on) attrs[a] = ""; else delete attrs[a]; },
+    focus() {},
   };
 }
 const els = new Map();

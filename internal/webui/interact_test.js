@@ -22,6 +22,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const assert = require("assert");
 
 // ---- stub DOM --------------------------------------------------------------
 // measureText reports only a width; stage.js's stageMeasure then falls back to
@@ -53,6 +54,11 @@ const stageCtx = recordingCtx();
 // canvas is asked for it on press and always gives it back on release.
 const captures = [];
 let held = null;
+// focusCalls counts #stage's own focus() calls — the Task 9/11 review fix
+// under test below: pointerdown's preventDefault() (needed to stop the
+// browser's own drag-image gesture) suppresses the compatibility mousedown's
+// default focus action too, so stagePointerDown must call this explicitly.
+let focusCalls = 0;
 function makeEl(sel) {
   return {
     sel,
@@ -72,6 +78,7 @@ function makeEl(sel) {
     hasAttribute(a) { return this.attrs[a] !== undefined; },
     setAttribute(a, v) { this.attrs[a] = v; },
     toggleAttribute(a, on) { if (on) this.attrs[a] = ""; else delete this.attrs[a]; },
+    focus() { if (sel === "#stage") focusCalls++; },
   };
 }
 const els = new Map();
@@ -185,6 +192,7 @@ function fresh() {
   __spy.inspector = 0;
   __spy.converts = 0;
   captures.length = 0;
+  focusCalls = 0;
   stageCtx.calls.length = 0;
 }
 
@@ -472,6 +480,117 @@ fresh();
     !solo.targets.xs.includes(0) || solo.targets.xs.filter((t) => t === 0).length === 1,
     JSON.stringify(solo.targets.xs));
   same("pure: only the canvas guides remain", solo.targets.xs, [0, 960, 1920]);
+}
+
+// ---- Task 9/11 review fix: the canvas must focus itself on press ----------
+// tabindex="0" alone is not enough. stagePointerDown calls preventDefault()
+// on a press that hits an element (to stop the browser's own drag-image
+// gesture), and that ALSO eats the compatibility mousedown's default action —
+// which is what would otherwise have focused the canvas. Without an explicit
+// focus() call, a click selects an element but Task 11's arrow-key nudging
+// has nowhere to land right after it.
+{
+  fresh();
+  press(150, 180); // hits the text element
+  eq("focus: a press that hits an element focuses the canvas", focusCalls, 1);
+  release(150, 180);
+
+  // The same must hold for a press that selects nothing (the scene) too, so
+  // the canvas stays reachable for Escape/Tab regardless of what was clicked.
+  fresh();
+  __t.setSelected(0);
+  press(1900, 1050); // empty canvas
+  eq("focus: an empty-canvas press focuses the canvas too", focusCalls, 1);
+}
+
+// ---- Task 10 review fix: a plain select-click schedules no convert --------
+// Before this, stageEndDrag() called scheduleConvert() unconditionally, so
+// clicking an element WITHOUT dragging it — selection commits on press,
+// remember — still POSTed the (unchanged) manifest to /api/convert.
+{
+  fresh();
+  press(150, 180);
+  release(150, 180); // no move() in between
+  eq("no-op click: nothing moved, so no convert is scheduled", __spy.converts, 0);
+  eq("no-op click: the element is exactly where it was", __t.elements()[0].x, 100);
+
+  // A drag that actually moves something still converts exactly once, same
+  // as the "press, move, release" block above already covers end to end.
+  fresh();
+  press(150, 180);
+  move(200, 200);
+  release(200, 200);
+  eq("real drag: still converts once", __spy.converts, 1);
+
+  // Escape-cancelling a gesture that never moved is also a no-op — cancel()
+  // writes the same (unrounded-but-equal) origin back, so there is nothing
+  // new to persist.
+  fresh();
+  press(150, 180);
+  stageKeyDown({ key: "Escape", preventDefault() {} });
+  eq("escape with no movement: reverting a no-op schedules no convert", __spy.converts, 0);
+}
+
+// ---- Task 9/10 review fix: a stray pointer must not drive another one's ---
+// gesture. stagePointerMove/Up used to ignore e.pointerId entirely, so on a
+// touchscreen a second finger's press would close the first finger's gesture
+// (the orphan-press guard in stagePointerDown always does that) and start its
+// own — but the first finger, now uncaptured, kept sending pointermove/up
+// events that were read as driving whatever gesture was CURRENTLY live, i.e.
+// the second finger's element.
+{
+  fresh();
+  press(150, 180);           // finger A
+  const idA = pointerId;
+  move(200, 200);
+  eq("two-finger: A's own move applies", __t.elements()[0].x, 150);
+
+  press(1100, 620);          // finger B lands on the list, closing A's gesture
+  const idB = pointerId;
+  eq("two-finger: B starts its own gesture", __t.drag().index, 1);
+  eq("two-finger: closing A committed it where A left it", __t.elements()[0].x, 150);
+
+  const listXBefore = __t.elements()[1].x;
+  stagePointerMove({ clientX: 999 * CLIENT_PER_MANIFEST, clientY: 999 * CLIENT_PER_MANIFEST, pointerId: idA, preventDefault() {} });
+  eq("two-finger: a stray move from the WRONG pointer changes nothing", __t.elements()[1].x, listXBefore);
+  eq("two-finger: B's gesture is still open", __t.drag() !== null, true);
+
+  stagePointerUp({ pointerId: idA });
+  eq("two-finger: the wrong pointer's release does not end B's gesture", __t.drag() !== null, true);
+
+  stagePointerUp({ pointerId: idB });
+  eq("two-finger: B's OWN release ends B's gesture", __t.drag(), null);
+}
+
+// ---- Interact runs with no DOM in scope at all -----------------------------
+// Mirrors geometry_test.js's purity guard: interact.js's file header claims
+// the Interact object (begin/move/cancel) never touches the DOM, only the
+// pointer-plumbing below it does. Loading the raw source into a bare vm
+// context with no document/window/etc and driving begin/move/cancel through
+// it is what actually proves that rather than just asserting it in a comment.
+// (geometry.js has to be loaded alongside it: Interact.begin/move/cancel call
+// straight into Geometry.hitTest/onHandle/dragPatch/moveTo/snapTargets.)
+{
+  const bareCtx = vm.createContext({});
+  const geomSrc = fs.readFileSync(path.join(staticDir, "geometry.js"), "utf8");
+  const interactSrc = fs.readFileSync(path.join(staticDir, "interact.js"), "utf8");
+  assert.doesNotThrow(() => {
+    vm.runInContext(geomSrc, bareCtx, { filename: "geometry.js" });
+    vm.runInContext(interactSrc, bareCtx, { filename: "interact.js" });
+  }, "interact.js (or geometry.js) referenced something DOM-shaped at load time");
+  const I = vm.runInContext("Interact", bareCtx);
+
+  const boxes = [{ x: 0, y: 0, w: 100, h: 100 }];
+  const elements = [{ type: "text", x: 0, y: 0, size: 100 }];
+  const world = { boxes, elements, selected: null, width: 1920, height: 1080 };
+  const p = (x, y) => ({ x, y, scale: 0.5 });
+  const same2 = (a, b) => assert.strictEqual(JSON.stringify(a), JSON.stringify(b));
+
+  const started = I.begin(p(50, 50), world);
+  eq("bare: begin selects what it hit", started.select, 0);
+  same2(I.move(started.drag, p(90, 90)).patch, { x: 40, y: 40 });
+  same2(I.cancel(started.drag).patch, { x: 0, y: 0 });
+  eq("bare: a press on nothing starts nothing", I.begin(p(500, 500), world).drag, null);
 }
 
 if (failures) {

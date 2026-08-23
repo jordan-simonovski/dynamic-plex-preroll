@@ -67,6 +67,7 @@ test("geometry.js runs with no DOM in scope at all", () => {
   same(G.handlePoint(boxA), { x: 10, y: 10 });
   assert.ok(G.onHandle(boxA, 10, 10, 1));
   same(G.moveTo({ type: "text", x: 10, y: 20 }, 5, -5), { x: 15, y: 15 });
+  same(G.nudge({ type: "text", x: 10, y: 20 }, 1, 0), { x: 11, y: 20 });
   assert.strictEqual(G.resizeSize(100, 100, 50), 150);
   same(G.dragPatch({ type: "text", x: 10, y: 20 }, boxA, 5, 5, { xs: [], ys: [] }, 8),
     { patch: { x: 15, y: 25 }, guides: { x: null, y: null } });
@@ -218,6 +219,13 @@ test("dragging a text element moves x/y; dragging a list moves x/startY", () => 
 
 test("moveTo rounds to one decimal so YAML stays readable", () => {
   assert.deepStrictEqual(Geometry.moveTo({ type: "text", x: 0, y: 0 }, 1.23456, 0), { x: 1.2, y: 0 });
+});
+
+test("nudge is moveTo with whole-pixel steps", () => {
+  assert.deepStrictEqual(Geometry.nudge({ type: "text", x: 100, y: 200 }, 1, 0), { x: 101, y: 200 });
+  assert.deepStrictEqual(Geometry.nudge({ type: "list", x: 100, startY: 200 }, 0, -10), { x: 100, startY: 190 });
+  assert.deepStrictEqual(Geometry.nudge({ type: "text", x: 100.6, y: 200 }, 1, 0), { x: 102, y: 200 },
+    "a nudge lands on whole pixels so repeated presses stay predictable");
 });
 
 test("resizeSize scales the font by the handle's vertical travel", () => {

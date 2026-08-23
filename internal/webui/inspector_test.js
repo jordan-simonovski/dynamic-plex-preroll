@@ -26,25 +26,36 @@ const drawCtx = new Proxy({ font: "", fillStyle: "", strokeStyle: "", textAlign:
     : () => {})),
   set: (t, k, v) => { t[k] = v; return true; },
 });
-function makeEl(sel) {
-  return {
-    sel,
+// parent + contains()/focus() are Task 11's addition: renderInspector()'s
+// real focus fix (see inspector.js) checks whether document.activeElement is
+// a descendant of #inspector BEFORE wiping its innerHTML, and this stub does
+// not build a real DOM tree from innerHTML strings — so a child obtained via
+// panel.querySelector() is given a `parent` link back to the panel that asked
+// for it, which is enough for a synthetic focus/contains check without
+// parsing any markup.
+function makeEl(sel, parent) {
+  const el = {
+    sel, parent,
     innerHTML: "", textContent: "", value: "", checked: false,
     clientWidth: 960, width: 0, height: 0, style: {},
     dataset: {}, options: [], attrs: {},
     classList: { toggle() {}, add() {}, remove() {} },
     addEventListener() {}, appendChild() {}, closest() { return null; },
-    querySelector: () => makeEl(),
+    querySelector: () => makeEl(undefined, el),
     getContext: () => drawCtx,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 540 }),
     setPointerCapture() {}, hasPointerCapture() { return false; }, releasePointerCapture() {},
-    hasAttribute(a) { return this.attrs[a] !== undefined; },
-    setAttribute(a, v) { this.attrs[a] = v; },
-    toggleAttribute(a, on) { if (on) this.attrs[a] = ""; else delete this.attrs[a]; },
+    hasAttribute(a) { return el.attrs[a] !== undefined; },
+    setAttribute(a, v) { el.attrs[a] = v; },
+    toggleAttribute(a, on) { if (on) el.attrs[a] = ""; else delete el.attrs[a]; },
+    contains(x) { for (let n = x; n; n = n.parent) if (n === el) return true; return false; },
+    focus() { document.activeElement = el; },
   };
+  return el;
 }
 const els = new Map();
 const document = {
+  activeElement: null,
   querySelector(sel) {
     if (!els.has(sel)) els.set(sel, makeEl(sel));
     return els.get(sel);
@@ -88,7 +99,7 @@ vm.runInContext(`globalThis.__t = {
 
 const { __t, inspectorTarget, elementPath, renderInspector, selectElement,
   stagePointerDown, stagePointerUp,
-  currentLayout } = ctx;
+  currentLayout, layoutSection } = ctx;
 const { actions, rerenderHooks } = ctx.__t;
 const panel = () => document.querySelector("#inspector").innerHTML;
 
@@ -185,7 +196,7 @@ const FIXTURE = () => ({
   has("audit: add a list element", scene, `data-action="add-element-here" data-kind="list"`);
   has("audit: every element is listed", scene, `data-action="select-element" data-index="1"`);
   check("audit: the element list is a keyboard path to the selection",
-    scene.includes(`<button class="element-row`), scene);
+    scene.includes(`<button type="button" class="element-row`), scene);
 
   // Text element: text, x, y, size, colour, align, line height, remove, chips.
   __t.select(0, 0);
@@ -359,6 +370,71 @@ const clickAt = (cx, cy) => {
   clickAt(5, 5); // manifest (10, 10): empty canvas
   eq("click: empty canvas selects the scene", __t.selected(), null);
   eq("click: and the panel goes back to the scene", inspectorTarget().kind, "scene");
+}
+
+// ---- Task 11: renderInspector()'s real focus model -------------------------
+// Replacing #inspector's innerHTML destroys whatever was focused inside it —
+// a real loss ONLY when that is where focus actually was. Task 8's stopgap
+// refocused into the panel on every call, which would have stolen focus off
+// the STAGE the instant a keyboard-driven stage selection (Tab/arrows,
+// Task 11) repainted the inspector, breaking the very nudge keys that
+// selection was for. The fix: only steal focus back in when it was already
+// somewhere inside #inspector.
+{
+  __t.setState(FIXTURE());
+  __t.select(0, null);
+  const panel1 = document.querySelector("#inspector");
+
+  // Focus was elsewhere (simulating the stage's own Tab/arrow handling) —
+  // renderInspector() must leave it alone.
+  const stageStub = document.querySelector("#stage");
+  document.activeElement = stageStub;
+  renderInspector();
+  eq("focus: a re-render triggered from OUTSIDE #inspector does not steal focus",
+    document.activeElement, stageStub);
+
+  // Focus was inside #inspector (e.g. the element row that was just
+  // clicked) — renderInspector() must land it on the freshly-rendered panel
+  // rather than dropping it to <body>.
+  const wasFocused = panel1.querySelector("button");
+  document.activeElement = wasFocused;
+  eq("focus: the simulated prior focus really is inside #inspector",
+    panel1.contains(document.activeElement), true);
+  renderInspector();
+  const panel2 = document.querySelector("#inspector");
+  eq("focus: a re-render triggered from INSIDE #inspector refocuses within it",
+    panel2.contains(document.activeElement), true);
+  check("focus: it does not just leave the destroyed element focused",
+    document.activeElement !== wasFocused, "focus should move to the NEW panel's control");
+
+  // Nothing focused at all (document.activeElement null, e.g. <body>) is the
+  // same as "not inside #inspector" — no theft, no throw.
+  document.activeElement = null;
+  check("focus: no active element at all does not throw",
+    (() => { try { renderInspector(); return true; } catch (e) { console.error(e); return false; } })());
+}
+
+// ---- Task 11 review fixes: element rows are real buttons with the right ---
+// ARIA for a single-selection list, not a toggle-button's aria-pressed.
+//
+// layoutSection() is called directly rather than through renderInspector():
+// inspectorTarget() only ever renders the SCENE panel (where these rows
+// live) when selection.element is null or stale — the moment it names a real
+// element, the dispatch switches to the ELEMENT panel instead, so "the
+// selected row" can never actually appear in front of a user viewing the
+// row list at the same time. That is a pre-existing property of the
+// dispatch, not something Task 11 changed, so this checks the row markup
+// itself in isolation rather than asserting a panel state the app can't reach.
+{
+  __t.setState(FIXTURE());
+  __t.select(0, 1); // selection.element = 1: the SECOND row, for layoutSection to mark
+  const html = layoutSection({ kind: "render", layout: "main" });
+  has("rows: every row is a real <button type=\"button\">", html, `<button type="button" class="element-row`);
+  has("rows: the selected row is marked aria-current", html, `aria-current="true"`);
+  check("rows: aria-pressed is gone (this is a selection list, not a toggle)",
+    !html.includes("aria-pressed"), html);
+  eq("rows: exactly one row is marked current, not both",
+    (html.match(/aria-current="true"/g) || []).length, 1);
 }
 
 if (failures) {
