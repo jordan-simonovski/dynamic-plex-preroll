@@ -27,13 +27,20 @@ echo "plex: connection refused" >&2
 exit 1
 `
 
-func renderServer(t *testing.T, script string) (*httptest.Server, *Server) {
+// writeStub drops a shell script somewhere executable and returns its path.
+func writeStub(t *testing.T, script string) string {
 	t.Helper()
-	root := t.TempDir()
-	bin := filepath.Join(root, "fake-renderer")
+	bin := filepath.Join(t.TempDir(), "fake-renderer")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return bin
+}
+
+func renderServer(t *testing.T, script string) (*httptest.Server, *Server) {
+	t.Helper()
+	root := t.TempDir()
+	bin := writeStub(t, script)
 	s := &Server{
 		ManifestDir: filepath.Join(root, "manifests"),
 		RenderDir:   filepath.Join(root, "renders"),
@@ -271,5 +278,44 @@ func TestRenderNeutralisesSideEffectingEnv(t *testing.T) {
 		if !strings.Contains(log, fmt.Sprintf("%s=[%s]", k, v)) {
 			t.Errorf("%s must reach the renderer (the preview resolves against it); child saw:\n%s", k, log)
 		}
+	}
+}
+
+// The timeout is the only thing that reclaims the single render slot from a
+// wedged renderer: without it one hung ffmpeg makes the UI useless until
+// restart.
+func TestRenderTimeoutKillsTheRendererAndFreesTheSlot(t *testing.T) {
+	ts, s := renderServer(t, "#!/bin/sh\nexec sleep 60\n") // exec: the killed process is sleep itself
+	s.RenderTimeout = 200 * time.Millisecond
+
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	var started struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(res.Body).Decode(&started)
+
+	out := waitForJob(t, ts, started.ID)
+	if out["state"] != "failed" {
+		t.Fatalf("a render past its deadline must fail, got %+v", out)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "timed out") {
+		t.Fatalf("want a timeout error, got %q", msg)
+	}
+	// The stub sleeps 60s; finishing far sooner proves it was killed rather
+	// than waited out.
+	if secs, _ := out["seconds"].(float64); secs > 30 {
+		t.Fatalf("renderer ran %.1fs: it was not killed at the deadline", secs)
+	}
+
+	// The slot is free again: the next render runs and finishes.
+	s.RenderTimeout = 10 * time.Second // the point here is the slot, not the deadline
+	s.RenderBin = writeStub(t, fakeRendererOK)
+	next := do(t, "POST", ts.URL+"/api/render", validJSON)
+	if next.StatusCode != 202 {
+		t.Fatalf("the slot was not released: second render got %d", next.StatusCode)
+	}
+	json.NewDecoder(next.Body).Decode(&started)
+	if out := waitForJob(t, ts, started.ID); out["state"] != "done" {
+		t.Fatalf("second render failed: %+v", out)
 	}
 }
