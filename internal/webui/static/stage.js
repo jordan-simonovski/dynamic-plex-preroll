@@ -706,13 +706,9 @@ function stageKeyNav(e) {
   // panel — leave data mode, same as a click (interact.js's stagePointerDown).
   selection.dataSource = null;
   if (action.type === "select") {
-    selection.element = action.index;
-    renderStage();
-    renderInspector();
+    selectElement(action.index); // inspector.js: repaints the stage and the panel together
   } else if (action.type === "deselect") {
-    selection.element = null;
-    renderStage();
-    renderInspector();
+    selectElement(null);
   } else if (action.type === "delete") {
     layout.elements.splice(selection.element, 1);
     selection.element = null;

@@ -43,16 +43,25 @@ function makeEl() {
     modalOpen: false,
     showModal() { el.modalOpen = true; },
     close() { el.modalOpen = false; },
+    // The http-only clipboard fallback builds a throwaway <textarea>.
+    select() { el.selected = true; },
+    remove() { el.removed = true; },
   };
   return el;
 }
 const els = new Map();
+const copied = [];
+let execCommandOK = true;
 const document = {
   querySelector(sel) {
     if (!els.has(sel)) els.set(sel, makeEl());
     return els.get(sel);
   },
   createElement: () => makeEl(),
+  // The clipboard fallback's collaborators: copied records what the browser's
+  // own copy command was handed, execCommandOK arms whether it succeeds.
+  body: { appendChild(el) { copied.push(el.value); } },
+  execCommand: () => execCommandOK,
   // syncPath() sweeps every data-path-bound control. Nothing here renders real
   // markup, so a test registers its own fake controls in `bound`.
   querySelectorAll: () => bound,
@@ -462,6 +471,28 @@ pending.length = 0; // drop every convert() this block fired off; see below
   pending[0](reply({ yaml: "OLD", errors: [] }));
   await first;
   check("convert: stale response ignored", pane.textContent === "NEW", pane.textContent);
+
+  // Copy YAML on the documented LAN deployment: http://192.168.x.x:8382 is not
+  // a secure context, so navigator.clipboard is undefined there and the old
+  // handler threw a TypeError into nothing. It must fall back, and it must say
+  // something when even the fallback is refused.
+  {
+    const clipboard = ctx.navigator.clipboard;
+    pane.textContent = "name: copied-preroll";
+    ctx.navigator = { clipboard: undefined };
+    flashes.length = 0; copied.length = 0; execCommandOK = true;
+    await document.querySelector("#copy-yaml").onclick();
+    check("copy: without navigator.clipboard the text still reaches the clipboard",
+      copied.length === 1 && copied[0] === "name: copied-preroll", JSON.stringify(copied));
+    check("copy: and the user is told it worked",
+      flashes.length === 1 && !flashes[0].isError, JSON.stringify(flashes));
+
+    flashes.length = 0; execCommandOK = false;
+    await document.querySelector("#copy-yaml").onclick();
+    check("copy: a refused fallback reports instead of failing silently",
+      flashes.length === 1 && flashes[0].isError === true, JSON.stringify(flashes));
+    ctx.navigator = { clipboard };
+  }
 
   if (failures) {
     console.error(`\n${failures} check(s) failed`);

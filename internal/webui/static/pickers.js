@@ -173,7 +173,8 @@ async function openFilePicker(path, kind) {
     body.innerHTML = filePickerEmptyHTML(kind, roots || []);
     return;
   }
-  body.innerHTML = matching.map((f) => filePickerRow(f, kind)).join("");
+  body.innerHTML = matching.map((f) => filePickerRow(f, kind)).join("")
+    + fontPreviewNoteHTML(kind, matching.length);
   // A font can only be previewed in its own face once it is loaded, and each
   // one needs its own @font-face fetch. Unlike the image/audio previews above
   // (loading="lazy", preload="none" — browser-native throttles), a font has
@@ -185,6 +186,16 @@ async function openFilePicker(path, kind) {
   }
 }
 
+// Every row shows the same sample text, so a row past the cap is
+// indistinguishable from a font that genuinely looks like the browser's
+// default sans — the user reads the sample and believes it. Say which rows
+// are not previews rather than let the list lie about them.
+function fontPreviewNoteHTML(kind, total) {
+  if (kind !== "font" || total <= FONT_PREVIEW_CAP) return "";
+  return `<p class="empty">Only the first ${FONT_PREVIEW_CAP} of ${total} fonts are shown in their own face;
+    the rest use the browser's default until you pick one.</p>`;
+}
+
 // previewFont loads the file as a real @font-face and applies it to that row's
 // sample text, so the list shows what each font actually looks like rather
 // than a filename to guess from. Cached by path: reopening the dialog (or
@@ -192,12 +203,11 @@ async function openFilePicker(path, kind) {
 // file already sitting in document.fonts.
 //
 // ponytail: FONT_PREVIEW_CAP is a flat cap, not IntersectionObserver-driven
-// lazy loading — this is a local admin tool listing a user's own media
-// directory, not a hostile input, and a directory big enough to blow past 24
-// fonts is unusual. Rows beyond the cap simply render in the default face,
-// the same degradation previewFont's own catch already gives an unreadable
-// font. Swap in IntersectionObserver (load on scroll into view) if real
-// directories start regularly exceeding the cap.
+// lazy loading. A stock font directory sails past 24, so this is a cap real
+// users will hit, not an edge case — which is exactly why the rows beyond it
+// are DISCLOSED (fontPreviewNoteHTML) rather than quietly rendered in the
+// default face. Swap in IntersectionObserver (load on scroll into view) when
+// scrolling to find a font stops being good enough.
 const FONT_PREVIEW_CAP = 24;
 const previewFonts = new Map();
 function previewFont(path) {
@@ -337,15 +347,24 @@ function templateExample(snippet, scope) {
 // vm-context tests) does not exist; every other consumer of this file loads
 // state.js first, so the guard is always true there.
 if (typeof actions !== "undefined") {
+  // Dropping the media cache on CLOSE, rather than never (api.js's
+  // invalidateFileList had no production caller at all), is what makes a font
+  // dropped into the media directory mid-session appear: the next open
+  // re-lists instead of replaying a listing from boot. The listing is a local
+  // directory walk, so one walk per dialog costs nothing worth keeping.
+  const closeFilePicker = () => {
+    $("#file-picker").close();
+    filePickerTarget = null;
+    invalidateFileList();
+  };
   actions["browse-files"] = (d) => openFilePicker(d.target, d.kind);
   actions["pick-file"] = (d) => {
     if (!filePickerTarget) return;
     setPath(state, filePickerTarget, d.pathValue);
-    $("#file-picker").close();
-    filePickerTarget = null;
+    closeFilePicker();
     onStateChange();
   };
-  actions["close-file-picker"] = () => { $("#file-picker").close(); filePickerTarget = null; };
+  actions["close-file-picker"] = closeFilePicker;
 
   actions["insert-template"] = (d) => openTemplatePicker(d.target, d.scope);
   actions["close-template-picker"] = () => { $("#template-picker").close(); templateTarget = null; };

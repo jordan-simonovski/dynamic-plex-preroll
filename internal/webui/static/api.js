@@ -81,7 +81,8 @@ async function apiCapabilities() {
 }
 
 // The media listing changes only when someone adds a file, so it is fetched
-// once and reused by every picker in the session.
+// once and reused until the picker closes — pickers.js drops it there, so
+// reopening the dialog sees a file added since.
 let fileListCache = null;
 async function apiListFiles() {
   if (fileListCache) return fileListCache;

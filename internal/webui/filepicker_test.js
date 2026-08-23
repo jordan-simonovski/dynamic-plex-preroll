@@ -248,6 +248,13 @@ await withPicker({ files: [{ path: "media/x.png", name: "x.png", kind: "image", 
   eq("the cap does not grow with the directory size (200 fonts fires the same count as 50)",
     fontFaceLoads, capAt50);
 
+  // ...and the rows that are NOT previews say so. Every row shows the same
+  // sample text, so without this a capped row is indistinguishable from a
+  // font that really does look like the browser's default sans.
+  check("past the cap, the list discloses which rows are not real previews",
+    document.querySelector("#file-picker-body").innerHTML.includes("Only the first 24 of 200 fonts"),
+    document.querySelector("#file-picker-body").innerHTML.slice(-300));
+
   // Below the cap, every font is still previewed — this is a bound, not a
   // near-total disabling of the feature.
   const fewFonts = Array.from({ length: 3 }, (_, i) => (
@@ -258,6 +265,8 @@ await withPicker({ files: [{ path: "media/x.png", name: "x.png", kind: "image", 
   fontFaceLoads = 0;
   await openFilePicker("layouts.main.font", "font");
   eq("below the cap, every font is still previewed", fontFaceLoads, 3);
+  not("...and there is nothing to disclose when nothing was capped",
+    document.querySelector("#file-picker-body").innerHTML, "Only the first");
 }
 
 // A network failure must degrade exactly like an empty response — the picker

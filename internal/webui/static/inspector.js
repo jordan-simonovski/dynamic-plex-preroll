@@ -72,10 +72,15 @@ function renderInspector() {
   if (hadFocus) panel.querySelector("input, select, textarea, button")?.focus?.();
 }
 
-// selectElement is the ONE place selection.element changes, so the outline on
-// the stage and the panel on the right can never disagree about what is
-// selected. stage.js's selectAt() and the element rows below both go through
-// it; Task 9's drag and Task 11's keyboard selection should too.
+// selectElement is how selection.element changes when the selection is the
+// POINT of the gesture — a click on the stage (stage.js's selectAt), a drag
+// (interact.js), the keyboard's Tab/Escape (stage.js's stageKeyNav), the
+// element rows below. It exists so the outline on the stage and the panel on
+// the right are repainted together and can never disagree.
+// It is not the only writer: code that clears the selection as a side effect
+// of a bigger change (switching scene in timeline.js, changing a scene's
+// layout, deleting the selected element) sets it to null directly and relies
+// on the renderAll()/onStateChange() that change already does.
 function selectElement(index) {
   selection.element = index;
   renderStage();

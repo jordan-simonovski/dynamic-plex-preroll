@@ -171,7 +171,6 @@ async function loadManifest(name) {
   }
   openedFile = name;
   renderAll();
-  renderStage();
   refreshStageDataNow(); // replaceState() bypasses onStateChange
   convert();
   flash(`Loaded ${name}`);
@@ -218,7 +217,6 @@ async function deleteManifest() {
   replaceState(emptyManifest());
   openedFile = "";
   renderAll();
-  renderStage();
   refreshStageDataNow(); // replaceState() bypasses onStateChange
   convert();
   renderToolbar();
@@ -292,7 +290,6 @@ function onEditorChange(e) {
       ? { source: Object.keys(state.data)[0] || "", mode: "art", tile: "", dim: 0.35, limit: 0 }
       : null;
     renderAll();
-    renderStage();
     scheduleConvert();
     return;
   }
@@ -303,7 +300,6 @@ function onEditorChange(e) {
   if (t.dataset.rerender) {
     rerenderHooks[t.dataset.rerender]?.(t.dataset, t);
     renderAll();
-    renderStage();
     scheduleConvert();
   }
 }
@@ -347,10 +343,41 @@ $("#stage").addEventListener("keydown", stageKeyNav);
 // wireSceneDrag() binds the fix (sceneCardKeyDown) directly on each card, the
 // same place it binds dragstart/dragover/drop, so nothing extra is needed here.
 
+// navigator.clipboard exists only in a SECURE CONTEXT, and the deployment the
+// README describes is not one: compose publishes on every interface and the
+// documented way in is http://192.168.x.x:8382. So on the normal LAN install
+// navigator.clipboard was undefined and this handler threw an unhandled
+// TypeError — the button did nothing and said nothing. execCommand("copy") is
+// deprecated but works over plain http, which is the whole point here.
 $("#copy-yaml").onclick = async () => {
-  await navigator.clipboard.writeText($("#yaml code").textContent);
-  flash("YAML copied");
+  const text = $("#yaml code").textContent;
+  try {
+    if (navigator.clipboard) await navigator.clipboard.writeText(text);
+    else if (!execCommandCopy(text)) throw new Error("the browser refused the copy");
+    flash("YAML copied");
+  } catch (err) {
+    flash(`Could not copy: ${err.message}. Open the YAML drawer and copy it by hand.`, true);
+  }
 };
+
+// The pre-secure-context copy: hand the text to an off-screen textarea, select
+// it, and let the browser's own copy command take it from there.
+function execCommandCopy(text) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 // ---- stage chrome ----------------------------------------------------------
 // The YAML pane is a drawer now. `hidden` is the whole state — no class, no
@@ -370,21 +397,16 @@ $("#toggle-safe").onchange = renderStage;
 // these without knowing what "everything" is.
 //
 // Deviation from the Task 15 brief: it proposes a single-argument
-// setStateChangeHandler(() => { renderAll(); refreshStageData();
-// scheduleConvert(); }), dropping both the explicit renderStage() call and
-// the second (onRerender) argument. On disk setStateChangeHandler already
-// takes two callbacks — renameKey() calls onRerender() to restore a rejected
-// rename without a spurious re-validate — and renderAll() itself never draws
-// the stage (only the rail and the inspector). Dropping renderStage() here
-// would leave the stage showing the OLD scene/element for up to 2s after any
-// non-data edit, waiting on refreshStageData()'s debounce; dropping the
-// second argument would break a rejected rename's undo. Both are kept.
+// setStateChangeHandler, dropping the second (onRerender) callback. On disk
+// setStateChangeHandler takes two — renameKey() calls onRerender() to restore
+// a rejected rename without a spurious re-validate — so both are kept.
+// renderAll() draws the stage itself (state.js), which is why nothing here
+// calls renderStage() alongside it.
 setStateChangeHandler(
-  () => { renderAll(); renderStage(); refreshStageData(); scheduleConvert(); },
+  () => { renderAll(); refreshStageData(); scheduleConvert(); },
   () => renderAll(),
 );
 renderAll();
-renderStage();
 refreshStageDataNow();
 renderToolbar();
 // Capabilities decide what the toolbar even offers, so they are fetched once

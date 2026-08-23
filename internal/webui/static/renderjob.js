@@ -13,7 +13,6 @@
 const RENDER_POLL_MS = 1000;
 
 let renderPollTimer = null;
-let renderCapable = false;
 
 // ---- pure state machine -----------------------------------------------------
 
@@ -72,7 +71,7 @@ function nextRenderView(job) {
 // deployment has no renderer — an always-visible button that always fails is
 // worse than no button.
 function renderRenderControls(caps) {
-  renderCapable = !!(caps && caps.render);
+  const renderCapable = !!(caps && caps.render);
   $("#render-actions").innerHTML = renderCapable
     ? `<button class="btn" id="btn-render">Render preview</button>`
     : `<span class="muted" title="Start the UI with -render-bin pointing at the plex-pre-rolls binary">Rendering unavailable</span>`;
@@ -121,8 +120,12 @@ function pollRenderJob(id) {
       applyRenderView(nextRenderView({ kind: "poll-error", message: err.message }));
       return; // polling stops: nothing left to ask about a request that itself failed
     }
-    applyRenderView(nextRenderView(job));
-    if (job.state === "running") pollRenderJob(id); // only terminal states stop the loop
+    // keepPolling IS the decision — re-deriving it from job.state here would
+    // be a second copy of the state machine, free to disagree with the one the
+    // tests pin.
+    const view = nextRenderView(job);
+    applyRenderView(view);
+    if (view.keepPolling) pollRenderJob(id);
   }, RENDER_POLL_MS);
 }
 
