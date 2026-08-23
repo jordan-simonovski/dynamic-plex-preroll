@@ -461,6 +461,40 @@ pending.length = 0; // drop every convert() this block fired off; see below
 
 })().then(async () => {
 
+// onEditorClick is pure dispatch: it used to renderStage() and
+// scheduleConvert() after EVERY delegated action, so an action that had already
+// repainted drew the canvas twice and a pure selection click posted a convert
+// for a manifest that had not changed.
+  {
+    const drawn = [];
+    const realRenderStage = ctx.renderStage;
+    ctx.renderStage = () => drawn.push(1);
+    ctx.__t.actions["__probe"] = () => {};
+    const click = { target: { closest: () => ({ dataset: { action: "__probe" } }) } };
+
+    // Let any debounce still armed from the blocks above fire first, or its
+    // convert would be blamed on this click.
+    await new Promise((r) => setTimeout(r, 400));
+    fetchLog.length = 0;
+    ctx.onEditorClick(click);
+    check("click dispatch: an action that repaints nothing repaints nothing",
+      drawn.length === 0, `${drawn.length} draw(s)`);
+
+    // scheduleConvert is debounced (300ms), so the network check has to wait it
+    // out rather than assert on the same tick.
+    await new Promise((r) => setTimeout(r, 400));
+    check("click dispatch: ...and posts no convert for a manifest that did not change",
+      !fetchLog.some((c) => c.url === "/api/convert"), JSON.stringify(fetchLog));
+
+    // An unknown action is still a no-op rather than a throw.
+    ctx.onEditorClick({ target: { closest: () => ({ dataset: { action: "__nope" } }) } });
+    ctx.onEditorClick({ target: { closest: () => null } });
+
+    delete ctx.__t.actions["__probe"];
+    ctx.renderStage = realRenderStage;
+    pending.length = 0;
+  }
+
 // convert(): responses that land out of order must not overwrite newer state.
   const pane = document.querySelector("#yaml code");
   const first = ctx.convert();

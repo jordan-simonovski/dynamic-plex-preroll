@@ -56,11 +56,16 @@ function probeCtx() {
 }
 
 const stageCtx = recordingCtx();
+// clientWidthReads counts every layout-forcing read of a frame's width. Nothing
+// else observes it, and renderStage() runs once per drag frame, so counting is
+// the only way to see the per-draw cost at all.
+let clientWidthReads = 0;
 function makeEl(sel) {
   return {
     sel,
     innerHTML: "", textContent: "", value: "", checked: false,
-    clientWidth: 960, width: 0, height: 0, style: {},
+    get clientWidth() { clientWidthReads++; return 960; },
+    width: 0, height: 0, style: {},
     dataset: {}, options: [], attrs: {},
     classList: { toggle() {}, add() {}, remove() {} },
     addEventListener() {}, appendChild() {}, closest() { return null; },
@@ -242,6 +247,16 @@ const PLACEHOLDER_NAME = __t.placeholderName();
   const z = stageCanvasSize(0, { width: 0, height: 0 }, 0);
   check("size: a hidden frame still produces a usable canvas",
     z.pixelWidth >= 1 && z.pixelHeight >= 1 && z.scale > 0, JSON.stringify(z));
+
+  // Reading clientWidth forces a layout flush, and renderStage() runs on every
+  // drag frame. The frame's width only changes when the window does, so it is
+  // measured once and cached.
+  renderStage();
+  clientWidthReads = 0;
+  renderStage();
+  renderStage();
+  renderStage();
+  eq("size: the frame is measured once, not once per draw", clientWidthReads, 0);
 }
 
 // Template substitution: what the stage can resolve it resolves; what it

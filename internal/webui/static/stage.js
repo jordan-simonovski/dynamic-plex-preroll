@@ -273,12 +273,25 @@ function stageCanvasSize(frameWidth, dims, dpr) {
 }
 
 // ---- draw ------------------------------------------------------------------
+// stageFrameWidth caches #stage-frame's width. Reading clientWidth forces the
+// browser to flush pending layout, and renderStage() runs on every drag frame —
+// so this was a synchronous layout per pointermove. The frame's width only
+// changes when the window does: .studio is a fixed-column grid (190px / 1fr /
+// 340px) and the YAML drawer sits outside it, so nothing else in the UI moves
+// this edge. null means "not measured yet".
+let stageFrameWidth = null;
+window.addEventListener("resize", () => {
+  stageFrameWidth = null;
+  renderStage(); // the canvas did not follow a resize before this either
+});
+
 function renderStage() {
   const canvas = $("#stage");
   const frame = $("#stage-frame");
   if (!canvas || !frame) return;
+  if (stageFrameWidth === null) stageFrameWidth = frame.clientWidth;
   const dims = stageDimensions();
-  const size = stageCanvasSize(frame.clientWidth, dims, window.devicePixelRatio);
+  const size = stageCanvasSize(stageFrameWidth, dims, window.devicePixelRatio);
   canvas.width = size.pixelWidth;
   canvas.height = size.pixelHeight;
   canvas.style.width = size.cssWidth + "px";
