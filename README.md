@@ -165,6 +165,26 @@ replaces, `original` keeps clip audio, `mix` blends). `audio.start` seeks into t
 track (seconds) so a manifest can drop in on a hook instead of the intro;
 `audio.fadeOut` is output-relative.
 
+## Config UI
+
+A browser-based editor for building manifests without hand-writing YAML.
+
+```bash
+docker compose up -d preroll-ui   # http://localhost:8382
+# or locally (pure Go, no ImageMagick needed):
+go run ./cmd/preroll-ui -manifest-dir manifests
+```
+
+The editor covers the whole DSL — data sources (with per-provider parameter
+hints), layouts, the scene timeline, and audio — and shows the generated YAML
+live with validation errors as you type. **Save** writes the manifest into the
+manifest directory, so the next render run (`docker compose run plex-pre-roll`
+with `MANIFEST_DIR` set) picks it up. Saves are strict: an invalid manifest is
+refused rather than written.
+
+The UI has no auth — it can read, write and delete files in `MANIFEST_DIR`.
+Keep it on your LAN; don't expose port 8382 to the internet.
+
 ## Configuration
 
 Configuration is read from the environment (Docker reads it from `.env`):
