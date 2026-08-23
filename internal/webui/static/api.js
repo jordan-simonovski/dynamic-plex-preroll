@@ -54,6 +54,22 @@ async function apiDeleteManifest(name) {
   }
 }
 
+// Resolving data runs the real providers, so it can be slow and it can fail;
+// both are ordinary and the caller gets a well-formed answer either way (see
+// internal/webui/data.go: it always answers 200).
+async function apiResolveData(dataMap) {
+  try {
+    const res = await fetch("/api/data/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: dataMap }),
+    });
+    return await res.json();
+  } catch (err) {
+    return { configured: false, reason: err.message, sources: {} };
+  }
+}
+
 async function apiCapabilities() {
   try {
     return await (await fetch("/api/capabilities")).json();

@@ -62,6 +62,10 @@ async function renderToolbar() {
     $("#manifest-picker").value = "";
     renderAll();
     renderStage();
+    // replaceState() bypasses onStateChange, so nothing else refetches: a
+    // stale resolve from the manifest just left would otherwise linger keyed
+    // under whatever source names this one reuses.
+    refreshStageDataNow();
     convert();
   };
   $("#btn-save").onclick = saveManifest;
@@ -78,6 +82,7 @@ async function loadManifest(name) {
   openedFile = name;
   renderAll();
   renderStage();
+  refreshStageDataNow(); // replaceState() bypasses onStateChange
   convert();
   flash(`Loaded ${name}`);
 }
@@ -124,6 +129,7 @@ async function deleteManifest() {
   openedFile = "";
   renderAll();
   renderStage();
+  refreshStageDataNow(); // replaceState() bypasses onStateChange
   convert();
   renderToolbar();
 }
@@ -144,6 +150,9 @@ $("#editor").addEventListener("input", (e) => {
   } else {
     setPath(state, path, coerce(e.target));
   }
+  // Only a data-source edit can change what the providers return; anything
+  // else just redraws.
+  if (path.startsWith("data.")) refreshStageData();
   renderStage();
   scheduleConvert();
 });
@@ -202,10 +211,11 @@ $("#toggle-safe").onchange = renderStage;
 // re-validate; a rejected rename only needs the form put back. state.js calls
 // these without knowing what "everything" is.
 setStateChangeHandler(
-  () => { renderAll(); renderStage(); scheduleConvert(); },
+  () => { renderAll(); renderStage(); refreshStageData(); scheduleConvert(); },
   () => renderAll(),
 );
 renderAll();
 renderStage();
+refreshStageDataNow();
 renderToolbar();
 convert();
