@@ -94,6 +94,132 @@ function syncColorRow(path, value) {
   }
 }
 
+// ---- file picker -----------------------------------------------------------
+// A path field plus a Browse button. The TEXT FIELD stays the value, exactly
+// like colorField above: a path outside the media roots (added since load, or
+// simply outside every -media-dir) is still perfectly legal in a manifest, it
+// just cannot be browsed to. openFilePicker() only ever writes INTO the field
+// (via pick-file, below) — nothing here rewrites what the user typed.
+function fileField(label, path, value, kind, hint) {
+  return `<label class="field"><span>${esc(label)}</span>
+    <span class="file-row">
+      <input type="text" data-path="${esc(path)}" value="${esc(value ?? "")}" placeholder="media/common/...">
+      <button type="button" class="btn ghost" data-action="browse-files"
+        data-target="${esc(path)}" data-kind="${esc(kind)}">Browse</button>
+    </span>
+    ${hint ? `<small>${esc(hint)}</small>` : ""}
+  </label>`;
+}
+
+function fileKindLabel(kind) {
+  return { font: "font", image: "image", audio: "audio track", video: "video" }[kind] || "file";
+}
+
+// matchingFiles is the whole "what gets listed" decision, pulled out of
+// openFilePicker so it can be checked without a DOM: /api/files enumerates
+// every kind of media at once, and each field only wants its own.
+function matchingFiles(files, kind) {
+  return (files || []).filter((f) => f.kind === kind);
+}
+
+// filePickerEmptyHTML is the other half of the degraded state: no matches,
+// either because nothing of that kind exists yet (roots are configured and
+// walked) or because no media directory is configured at all (roots is
+// empty — see files.go's files(), which always answers 200 with an empty
+// list rather than an error). Either way the text field upstream still
+// accepts a hand-typed path; this dialog is only ever an assist.
+function filePickerEmptyHTML(kind, roots) {
+  return roots.length
+    ? `<p class="empty">No ${fileKindLabel(kind)} files found under ${esc(roots.join(", "))}.
+       Drop one in and reopen this dialog.</p>`
+    : `<p class="empty">No media directory is configured. Start the UI with
+       <code>-media-dir</code> (or <code>MEDIA_DIR</code>) pointing at your media folder,
+       or type the path by hand — the field accepts anything.</p>`;
+}
+
+function filePickerRow(f, kind) {
+  const url = `/api/files/raw?path=${encodeURIComponent(f.path)}`;
+  const preview = kind === "image"
+    ? `<img class="file-thumb" src="${esc(url)}" alt="" loading="lazy">`
+    : kind === "font"
+      ? `<span class="file-sample" data-font-sample="${esc(f.path)}">Top Movies — Month</span>`
+      : kind === "audio"
+        ? `<audio class="file-audio" controls preload="none" src="${esc(url)}"></audio>`
+        : "";
+  return `<button type="button" class="file-row-item" data-action="pick-file" data-path-value="${esc(f.path)}">
+    <span class="file-name">${esc(f.name)}</span>
+    <span class="file-path">${esc(f.path)}</span>
+    <span class="file-size">${Math.round(f.size / 1024)} KB</span>
+    ${preview}
+  </button>`;
+}
+
+// filePickerTarget remembers which manifest path the open dialog will write
+// to — set when it opens, cleared on close or pick, so a stray keystroke
+// after closing can never write into a field the user isn't looking at.
+let filePickerTarget = null;
+
+async function openFilePicker(path, kind) {
+  filePickerTarget = path;
+  const dialog = $("#file-picker");
+  const body = $("#file-picker-body");
+  $("#file-picker-title").textContent = `Choose a ${fileKindLabel(kind)}`;
+  body.innerHTML = `<p class="muted">Loading…</p>`;
+  dialog.showModal();
+
+  const { files, roots } = await apiListFiles();
+  const matching = matchingFiles(files, kind);
+  if (!matching.length) {
+    body.innerHTML = filePickerEmptyHTML(kind, roots || []);
+    return;
+  }
+  body.innerHTML = matching.map((f) => filePickerRow(f, kind)).join("");
+  // A font can only be previewed in its own face once it is loaded, and each
+  // one needs its own @font-face. They are loaded lazily, per open dialog.
+  if (kind === "font") {
+    for (const f of matching) previewFont(f.path);
+  }
+}
+
+// previewFont loads the file as a real @font-face and applies it to that row's
+// sample text, so the list shows what each font actually looks like rather
+// than a filename to guess from. Cached by path: reopening the dialog (or
+// browsing the same font field twice) must not re-request and re-decode a
+// file already sitting in document.fonts.
+const previewFonts = new Map();
+function previewFont(path) {
+  const apply = (family) => {
+    for (const el of document.querySelectorAll(`[data-font-sample="${CSS.escape(path)}"]`)) {
+      el.style.fontFamily = `"${family}", sans-serif`;
+    }
+  };
+  if (previewFonts.has(path)) { apply(previewFonts.get(path)); return; }
+  const family = `preview${previewFonts.size}`;
+  previewFonts.set(path, family);
+  new FontFace(family, `url("/api/files/raw?path=${encodeURIComponent(path)}")`)
+    .load()
+    .then((loaded) => { document.fonts.add(loaded); apply(family); })
+    .catch(() => { /* an unreadable font simply shows in the default face */ });
+}
+
+// Registering actions here (rather than app.js) matches every other view
+// file's convention — inspector.js and timeline.js do the same. Guarded
+// because pickers_test.js requires this file directly under plain Node,
+// where `actions` (a state.js global, sharing script scope only inside the
+// vm-context tests) does not exist; every other consumer of this file loads
+// state.js first, so the guard is always true there.
+if (typeof actions !== "undefined") {
+  actions["browse-files"] = (d) => openFilePicker(d.target, d.kind);
+  actions["pick-file"] = (d) => {
+    if (!filePickerTarget) return;
+    setPath(state, filePickerTarget, d.pathValue);
+    $("#file-picker").close();
+    filePickerTarget = null;
+    onStateChange();
+  };
+  actions["close-file-picker"] = () => { $("#file-picker").close(); filePickerTarget = null; };
+}
+
 // Node: exported for pickers_test.js. Browser: the functions above are already
 // global from the classic script.
 if (typeof module !== "undefined" && module.exports) {

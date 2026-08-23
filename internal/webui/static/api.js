@@ -79,3 +79,17 @@ async function apiCapabilities() {
     return { plex: false, render: false, media: false };
   }
 }
+
+// The media listing changes only when someone adds a file, so it is fetched
+// once and reused by every picker in the session.
+let fileListCache = null;
+async function apiListFiles() {
+  if (fileListCache) return fileListCache;
+  try {
+    fileListCache = await (await fetch("/api/files")).json();
+  } catch {
+    fileListCache = { files: [], roots: [] };
+  }
+  return fileListCache;
+}
+function invalidateFileList() { fileListCache = null; }

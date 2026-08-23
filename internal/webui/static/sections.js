@@ -23,8 +23,7 @@ function renderAudio() {
   $("#section-audio").innerHTML = `
     <h2>Audio</h2>
     <div class="grid2">
-      ${field("Soundtrack file", textInput("audio.file", a.file, { placeholder: "media/common/track.mp3" }),
-        "Leave empty for no soundtrack")}
+      ${fileField("Soundtrack file", "audio.file", a.file, "audio", "Leave empty for no soundtrack")}
       ${field("Mode", select("audio.mode", a.mode, ["soundtrack", "original", "mix"]),
         "soundtrack: music only · original: clip audio · mix: both")}
       ${field("Start offset (s)", numInput("audio.start", a.start, { min: 0 }),
