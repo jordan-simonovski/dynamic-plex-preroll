@@ -34,13 +34,27 @@ function setStageData(resolved) {
 // reply is already shaped exactly like setStageData's argument, so it is
 // passed straight through.
 let stageDataReason = "";
+// stageDataSeq is app.js's convertSeq pattern, for the same reason: this is
+// fired both by the debounce (every data.* edit) and directly by boot, New,
+// Open and Delete, so two resolves can be in flight at once. Plex is slow and
+// answers out of order, and the replies land keyed by SOURCE NAME — names a
+// new manifest happily reuses — so a slow reply for a manifest that is no
+// longer open would overwrite the current one's data with somebody else's
+// items. Only the newest resolve may touch stageData.
+let stageDataSeq = 0;
 async function refreshStageDataNow() {
+  const seq = ++stageDataSeq;
   if (!Object.keys(state.data).length) {
+    // Bumping the sequence above is what makes this branch an INVALIDATION
+    // and not just an early return: New/Delete land here, and any resolve
+    // still in flight for the manifest just closed is now stale.
     setStageData({});
+    stageDataReason = "";
     renderStage();
     return;
   }
   const out = await apiResolveData(state.data);
+  if (seq !== stageDataSeq) return; // a newer refresh has already answered
   setStageData(out);
   stageDataReason = out.configured ? "" : (out.reason || "Plex is not configured — showing placeholder data.");
   renderStage();
@@ -60,7 +74,14 @@ const PLACEHOLDER_ITEMS = [
   { rank: 5, name: "Paddington 2", views: 12, hasMedia: true },
 ];
 
+// A source is only resolved if the MANIFEST still declares it. Without that
+// check, removing a data source left its last real Plex items sitting in
+// stageData.sources: a list or background still naming it kept drawing them,
+// and because the entry was populated stagePlaceholderSources saw nothing
+// missing, so the note said nothing either. Guarding the shared reader rather
+// than the Remove button covers renames and anything else that retires a name.
 function stageResolved(sourceName) {
+  if (!state.data[sourceName]) return null;
   const r = stageData.sources[sourceName];
   return r && r.items && r.items.length ? r : null;
 }
@@ -576,7 +597,9 @@ function updateStageChrome(scene, layout) {
   const extra = [];
   if (stageDataReason) extra.push(stageDataReason);
   for (const [name, src] of Object.entries(stageData.sources)) {
-    if (src && src.error) extra.push(`${name}: ${src.error}`);
+    // Same rule as stageResolved: a source the manifest no longer declares
+    // must not still be reporting its last error under the canvas.
+    if (state.data[name] && src && src.error) extra.push(`${name}: ${src.error}`);
   }
   const bg = scene && scene.background;
   if (bg && bg.source) {
