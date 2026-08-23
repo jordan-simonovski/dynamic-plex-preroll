@@ -134,7 +134,7 @@ function sceneInspector(sc, i) {
 
 function sceneKindFields(sc, i, base) {
   if (sc.kind === "image") {
-    return `${field("Image file", textInput(`${base}.file`, sc.file, { placeholder: "media/common/intro.png" }))}
+    return `${fileField("Image file", `${base}.file`, sc.file, "image")}
       ${field("Duration (s)", numInput(`${base}.duration`, sc.duration, { min: 0 }))}`;
   }
   if (sc.kind === "clips") {
@@ -196,11 +196,10 @@ function layoutSection(sc) {
       <button class="btn ghost danger" data-action="remove-layout" data-name="${esc(name)}">Remove</button>
     </div>
     <div class="stack">
-      ${field("Font file", textInput(`${base}.font`, layout.font, { placeholder: "media/common/MyFont.ttf" }))}
+      ${fileField("Font file", `${base}.font`, layout.font, "font", "The .ttf/.otf the renderer draws with")}
       ${colorField("Background colour", `${base}.background.color`, layout.background?.color,
         "Use none for transparent — required for clip labels and dynamic backgrounds")}
-      ${field("Background image", textInput(`${base}.background.image`, layout.background?.image, { placeholder: "media/common/bg.png" }),
-        "Wins over the colour when set")}
+      ${fileField("Background image", `${base}.background.image`, layout.background?.image, "image", "Wins over the colour when set")}
     </div>
     <h3>Elements</h3>
     <div class="element-list">${els || `<p class="empty">No elements — a layout needs at least one.</p>`}</div>
