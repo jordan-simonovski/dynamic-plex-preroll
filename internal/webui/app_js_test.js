@@ -229,6 +229,51 @@ function check(name, cond, detail) {
   check("renameKey: valid rename applied",
     Object.keys(ctx.__t.getState().data).join() === "renamed");
 
+  // retargetSource/retargetLayout are the whole point of renameKey: without
+  // them a rename dangles every reference to the old name. The cases above all
+  // seed `scenes: []` and `layouts: {}`, so neither function ever ran.
+  {
+    ctx.__t.setState({
+      data: { top: { provider: "plex.top", params: {} } },
+      layouts: {
+        title: { font: "", background: {}, elements: [
+          { type: "list", source: "top", item: "{{ .Name }}" },
+          { type: "text", text: "no source here" },
+        ] },
+      },
+      scenes: [
+        { kind: "clips", source: "top", label: "title" },
+        { kind: "render", layout: "title", background: { source: "top", mode: "art" } },
+      ],
+    });
+    flashes.length = 0;
+    renameKey("data", "top", "topMovies");
+    const st = ctx.__t.getState();
+    check("retargetSource: a clips scene's source follows the rename",
+      st.scenes[0].source === "topMovies", st.scenes[0].source);
+    check("retargetSource: a scene background's source follows the rename",
+      st.scenes[1].background.source === "topMovies", st.scenes[1].background.source);
+    check("retargetSource: a list element's source follows the rename",
+      st.layouts.title.elements[0].source === "topMovies", st.layouts.title.elements[0].source);
+    check("retargetSource: an element with no source is left alone, not given one",
+      st.layouts.title.elements[1].source === undefined, JSON.stringify(st.layouts.title.elements[1]));
+    check("retargetSource: nothing still points at the old name",
+      !JSON.stringify(st).includes('"top"'), JSON.stringify(st));
+
+    renameKey("layouts", "title", "titleCard");
+    const st2 = ctx.__t.getState();
+    check("retargetLayout: a render scene's layout follows the rename",
+      st2.scenes[1].layout === "titleCard", st2.scenes[1].layout);
+    check("retargetLayout: a clips scene's LABEL layout follows the rename too",
+      st2.scenes[0].label === "titleCard", st2.scenes[0].label);
+    check("retargetLayout: the layout map itself was rekeyed",
+      Object.keys(st2.layouts).join() === "titleCard", Object.keys(st2.layouts).join());
+    check("retargetLayout: a rejected rename retargets nothing",
+      (renameKey("layouts", "titleCard", "bad.name"),
+       ctx.__t.getState().scenes[1].layout === "titleCard"),
+      ctx.__t.getState().scenes[1].layout);
+  }
+
   // Why the dot rejection exists: paths are split on ".".
   const obj = { data: { "top.movies": { params: {} } } };
   check("getPath: a dotted key is unreachable",
@@ -437,6 +482,110 @@ function check(name, cond, detail) {
   check("clobber: Save is refused for lacking a name, not silently applied",
     flashes.length === 1 && flashes[0].isError === true && /name/i.test(flashes[0].msg),
     JSON.stringify(flashes));
+}
+
+// ---- the two confirm()-gated save branches, and delete's ------------------
+// saveManifest() is exercised by the clobber test above, but that path clears
+// openedFile and hits neither confirm. Both are the last thing standing between
+// Save and someone else's manifest, so both are checked here: what they ASK,
+// and that declining leaves the network untouched.
+{
+  // Branch 1: the manifest's name no longer matches the file it was opened as.
+  ctx.__t.setState({ ...ctx.emptyManifest(), name: "renamed" });
+  ctx.__t.setOpenedFile("original.yaml");
+  document.querySelector("#manifest-picker").options = [{ value: "original.yaml" }];
+
+  const asked = [];
+  const realConfirm = ctx.confirm;
+  ctx.confirm = (msg) => { asked.push(msg); return confirmAnswer; };
+
+  confirmAnswer = false;
+  fetchLog.length = 0;
+  await ctx.saveManifest();
+  check("save (rename): asks before writing over the file it was opened as",
+    asked.length === 1 && asked[0].includes("original.yaml") && asked[0].includes("renamed.yaml"),
+    JSON.stringify(asked));
+  check("save (rename): declining sends nothing at all",
+    !fetchLog.some((c) => c.method === "PUT"), JSON.stringify(fetchLog));
+  check("save (rename): declining leaves the open file alone",
+    ctx.__t.getOpenedFile() === "original.yaml", ctx.__t.getOpenedFile());
+
+  asked.length = 0;
+  confirmAnswer = true;
+  fetchLog.length = 0;
+  await ctx.saveManifest();
+  check("save (rename): accepting writes to the file it was OPENED as, not the derived name",
+    fetchLog.some((c) => c.method === "PUT" && c.url === "/api/manifests/original.yaml"),
+    JSON.stringify(fetchLog));
+
+  // Branch 2: a never-opened manifest whose derived filename already exists.
+  ctx.__t.setState({ ...ctx.emptyManifest(), name: "existing" });
+  ctx.__t.setOpenedFile("");
+  document.querySelector("#manifest-picker").options = [{ value: "existing.yaml" }];
+
+  asked.length = 0;
+  confirmAnswer = false;
+  fetchLog.length = 0;
+  await ctx.saveManifest();
+  check("save (overwrite): asks before landing on an existing manifest",
+    asked.length === 1 && asked[0].includes("existing.yaml") && /overwrite/i.test(asked[0]),
+    JSON.stringify(asked));
+  check("save (overwrite): declining sends nothing at all",
+    !fetchLog.some((c) => c.method === "PUT"), JSON.stringify(fetchLog));
+  check("save (overwrite): declining does not adopt the file either",
+    ctx.__t.getOpenedFile() === "", ctx.__t.getOpenedFile());
+
+  asked.length = 0;
+  confirmAnswer = true;
+  fetchLog.length = 0;
+  await ctx.saveManifest();
+  check("save (overwrite): accepting writes to the derived filename",
+    fetchLog.some((c) => c.method === "PUT" && c.url === "/api/manifests/existing.yaml"),
+    JSON.stringify(fetchLog));
+
+  // A name that matches the open file asks nothing at all — the confirms are
+  // for surprises, not for every save.
+  ctx.__t.setState({ ...ctx.emptyManifest(), name: "same" });
+  ctx.__t.setOpenedFile("same.yaml");
+  asked.length = 0;
+  fetchLog.length = 0;
+  await ctx.saveManifest();
+  check("save: the ordinary case asks nothing", asked.length === 0, JSON.stringify(asked));
+  check("save: ...and still saves", fetchLog.some((c) => c.method === "PUT"), JSON.stringify(fetchLog));
+
+  // Delete's confirm: it removes a file from the manifest directory, so the
+  // same rule applies — declining must not reach the network.
+  document.querySelector("#manifest-picker").value = "doomed.yaml";
+  asked.length = 0;
+  confirmAnswer = false;
+  fetchLog.length = 0;
+  await ctx.deleteManifest();
+  check("delete: asks first, naming the file",
+    asked.length === 1 && asked[0].includes("doomed.yaml"), JSON.stringify(asked));
+  check("delete: declining sends no DELETE",
+    !fetchLog.some((c) => c.method === "DELETE"), JSON.stringify(fetchLog));
+
+  confirmAnswer = true;
+  fetchLog.length = 0;
+  await ctx.deleteManifest();
+  check("delete: accepting sends the DELETE",
+    fetchLog.some((c) => c.method === "DELETE" && c.url === "/api/manifests/doomed.yaml"),
+    JSON.stringify(fetchLog));
+
+  // Nothing open: refused before the confirm, never mind the network.
+  document.querySelector("#manifest-picker").value = "";
+  asked.length = 0;
+  fetchLog.length = 0;
+  flashes.length = 0;
+  await ctx.deleteManifest();
+  check("delete: with nothing open it refuses without asking",
+    asked.length === 0 && !fetchLog.length && flashes.length === 1 && flashes[0].isError === true,
+    JSON.stringify({ asked, fetchLog, flashes }));
+
+  ctx.confirm = realConfirm;
+  confirmAnswer = true;
+  document.querySelector("#manifest-picker").options = [];
+  document.querySelector("#manifest-picker").value = "";
 }
 
 // new-empty and new-from also reset openedFile — the same clobber vector as

@@ -262,6 +262,11 @@ dialog.picker::backdrop { background: rgba(0, 0, 0, .6); }
   background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px;
 }
+/* Not a duplicate of .preview-head h2: same specificity, later in the file, so
+   it WINS for the "Render preview" heading — accent and uppercase, the panel's
+   own title, rather than the mono/muted treatment the YAML drawer's filename
+   heading wants. Deleting it as a "duplicate" changed how the heading looks. */
+.render-panel h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--accent); }
 #render-status { font-size: 12px; color: var(--muted); }
 #render-status.error { color: var(--danger); }
 #render-video { width: 100%; border-radius: 6px; background: #000; margin-top: 8px; }
