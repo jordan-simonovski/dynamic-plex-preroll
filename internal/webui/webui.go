@@ -62,6 +62,10 @@ type Server struct {
 	// PlexError explains why Plex is off, surfaced through /api/capabilities so
 	// the UI can say "PLEX_TOKEN unset" rather than silently faking everything.
 	PlexError string
+
+	// renderState holds the single in-flight render. Server is constructed
+	// once per process, so embedding the mutex here is safe.
+	renderState
 }
 
 // Handler returns the full route table: the JSON API under /api and the
@@ -78,6 +82,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/manifests/{name}", s.remove)
 	mux.HandleFunc("POST /api/data/resolve", s.resolve)
 	mux.HandleFunc("GET /api/plex/image", s.image)
+	mux.HandleFunc("POST /api/render", s.startRender)
+	mux.HandleFunc("GET /api/render/{id}", s.renderStatus)
+	mux.HandleFunc("GET /api/render/{id}/video", s.renderVideo)
 	staticRoot, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic(err) // embedded tree is fixed at compile time

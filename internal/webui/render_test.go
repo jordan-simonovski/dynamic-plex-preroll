@@ -1,0 +1,217 @@
+package webui
+
+import (
+	"encoding/json"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeRenderer writes a stub mp4 to the -manifest's output path and exits 0,
+// so the whole subprocess round-trip is exercised without ImageMagick.
+const fakeRendererOK = `#!/bin/sh
+# args: -manifest <path>
+manifest="$2"
+out=$(grep '^output:' "$manifest" | sed 's/^output: *//')
+mkdir -p "$(dirname "$out")"
+printf 'FAKEMP4' > "$out"
+echo "wrote $out"
+`
+
+const fakeRendererFail = `#!/bin/sh
+echo "plex: connection refused" >&2
+exit 1
+`
+
+func renderServer(t *testing.T, script string) (*httptest.Server, *Server) {
+	t.Helper()
+	root := t.TempDir()
+	bin := filepath.Join(root, "fake-renderer")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		ManifestDir: filepath.Join(root, "manifests"),
+		RenderDir:   filepath.Join(root, "renders"),
+		WorkDir:     root,
+		RenderBin:   bin,
+	}
+	if err := os.MkdirAll(s.ManifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	// Kill any still-running render so a slow stub cannot outlive its test.
+	t.Cleanup(func() {
+		s.renderMu.Lock()
+		defer s.renderMu.Unlock()
+		if s.currentJob != nil {
+			s.currentJob.cancel()
+		}
+	})
+	return ts, s
+}
+
+// waitForJob polls until the job leaves the running state, which is exactly
+// what the browser does.
+func waitForJob(t *testing.T, ts *httptest.Server, id string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		res := do(t, "GET", ts.URL+"/api/render/"+id, "")
+		var out map[string]any
+		json.NewDecoder(res.Body).Decode(&out)
+		if out["state"] != "running" {
+			return out
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("job %s never finished", id)
+	return nil
+}
+
+func TestRenderWithoutABinaryIsUnavailable(t *testing.T) {
+	ts, _ := newTestServer(t)
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	if res.StatusCode != 503 {
+		t.Fatalf("want 503 with no render binary, got %d", res.StatusCode)
+	}
+}
+
+func TestRenderRejectsAnInvalidManifest(t *testing.T) {
+	ts, _ := renderServer(t, fakeRendererOK)
+	res := do(t, "POST", ts.URL+"/api/render", `{"name":"draft"}`)
+	if res.StatusCode != 422 {
+		t.Fatalf("an invalid manifest must never reach the renderer; got %d", res.StatusCode)
+	}
+}
+
+func TestRenderRunsAndServesTheVideo(t *testing.T) {
+	ts, s := renderServer(t, fakeRendererOK)
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	if res.StatusCode != 202 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	var started struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(res.Body).Decode(&started)
+	if started.ID == "" {
+		t.Fatal("no job id returned")
+	}
+
+	out := waitForJob(t, ts, started.ID)
+	if out["state"] != "done" {
+		t.Fatalf("job failed: %+v", out)
+	}
+
+	video := do(t, "GET", ts.URL+"/api/render/"+started.ID+"/video", "")
+	if video.StatusCode != 200 {
+		t.Fatalf("video status %d", video.StatusCode)
+	}
+	if ct := video.Header.Get("Content-Type"); !strings.HasPrefix(ct, "video/") {
+		t.Fatalf("content type %q", ct)
+	}
+
+	// Render scratch must never land in the directory the batch renderer globs.
+	entries, _ := os.ReadDir(s.ManifestDir)
+	if len(entries) != 0 {
+		t.Fatalf("render wrote into the manifest directory: %v", entries)
+	}
+}
+
+func TestRenderSurfacesTheSubprocessError(t *testing.T) {
+	ts, _ := renderServer(t, fakeRendererFail)
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	var started struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(res.Body).Decode(&started)
+
+	out := waitForJob(t, ts, started.ID)
+	if out["state"] != "failed" {
+		t.Fatalf("want failed, got %+v", out)
+	}
+	if !strings.Contains(out["log"].(string), "connection refused") {
+		t.Fatalf("the renderer's own output must be surfaced, got %q", out["log"])
+	}
+}
+
+func TestRenderRefusesASecondConcurrentJob(t *testing.T) {
+	// A renderer that blocks long enough for the second request to arrive.
+	ts, _ := renderServer(t, "#!/bin/sh\nsleep 2\nexit 0\n")
+	first := do(t, "POST", ts.URL+"/api/render", validJSON)
+	if first.StatusCode != 202 {
+		t.Fatalf("first render status %d", first.StatusCode)
+	}
+	second := do(t, "POST", ts.URL+"/api/render", validJSON)
+	if second.StatusCode != 409 {
+		t.Fatalf("want 409 while a render is running, got %d", second.StatusCode)
+	}
+}
+
+func TestRenderStatusOfAnUnknownJobIs404(t *testing.T) {
+	ts, _ := renderServer(t, fakeRendererOK)
+	res := do(t, "GET", ts.URL+"/api/render/deadbeefdeadbeef", "")
+	if res.StatusCode != 404 {
+		t.Fatalf("want 404, got %d", res.StatusCode)
+	}
+}
+
+// A finished render's scratch is replaced, not accumulated: one slot, one set
+// of files. This is what keeps pre-roll-output/.ui-renders from growing.
+func TestRenderKeepsOnlyTheMostRecentScratch(t *testing.T) {
+	ts, s := renderServer(t, fakeRendererOK)
+	var ids []string
+	for range 2 {
+		res := do(t, "POST", ts.URL+"/api/render", validJSON)
+		if res.StatusCode != 202 {
+			t.Fatalf("status %d", res.StatusCode)
+		}
+		var started struct {
+			ID string `json:"id"`
+		}
+		json.NewDecoder(res.Body).Decode(&started)
+		ids = append(ids, started.ID)
+		if out := waitForJob(t, ts, started.ID); out["state"] != "done" {
+			t.Fatalf("job failed: %+v", out)
+		}
+	}
+	entries, err := os.ReadDir(s.RenderDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 { // the current render's manifest and its mp4
+		t.Fatalf("stale scratch left behind: %v", entries)
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ids[1]) {
+			t.Fatalf("%s is not from the most recent render %s", e.Name(), ids[1])
+		}
+	}
+	// The superseded job is gone, so its video 404s rather than serving a
+	// deleted file.
+	if res := do(t, "GET", ts.URL+"/api/render/"+ids[0]+"/video", ""); res.StatusCode != 404 {
+		t.Fatalf("want 404 for a superseded render, got %d", res.StatusCode)
+	}
+}
+
+// The UI is normally started with MANIFEST_DIR pointing at the real manifest
+// directory; inherited unchanged it would put the renderer into batch mode and
+// render everything except the manifest we asked for.
+func TestRenderDoesNotInheritBatchMode(t *testing.T) {
+	t.Setenv("MANIFEST_DIR", "/some/batch/dir")
+	ts, _ := renderServer(t, "#!/bin/sh\necho \"MANIFEST_DIR=[$MANIFEST_DIR]\"\nexit 1\n")
+	res := do(t, "POST", ts.URL+"/api/render", validJSON)
+	var started struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(res.Body).Decode(&started)
+	out := waitForJob(t, ts, started.ID)
+	if log, _ := out["log"].(string); !strings.Contains(log, "MANIFEST_DIR=[]") {
+		t.Fatalf("renderer must not inherit MANIFEST_DIR, got %q", log)
+	}
+}
