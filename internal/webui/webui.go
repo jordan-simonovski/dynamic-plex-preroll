@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/jordan-simonovski/dynamic-plex-preroll/internal/manifest"
 )
@@ -51,7 +53,29 @@ func (s *Server) Handler() http.Handler {
 		panic(err) // embedded tree is fixed at compile time
 	}
 	mux.Handle("GET /", http.FileServerFS(staticRoot))
-	return mux
+	return allowHost(mux)
+}
+
+// allowHost rejects requests whose Host is a DNS name rather than an IP
+// literal or localhost. The tool is LAN-only with no auth, but without this a
+// page the user happens to visit can point a name it controls at their box
+// (DNS rebinding) and rewrite or delete manifests as same-origin; rebinding
+// always arrives with a name in Host, never a bare IP.
+// ponytail: IP-or-localhost only. Fronting this with a reverse proxy under a
+// hostname needs an allowed-host flag, not this check dropped.
+func allowHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.Trim(host, "[]") // bare IPv6 literal, e.g. "[::1]"
+		if host != "localhost" && net.ParseIP(host) == nil {
+			http.Error(w, "forbidden host: reach this UI by IP or localhost", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type convertResponse struct {
@@ -62,7 +86,9 @@ type convertResponse struct {
 func (s *Server) convert(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 	if err != nil {
-		httpError(w, http.StatusBadRequest, err)
+		// Convert always answers 200 with an errors list (an oversized body is
+		// just another thing to report); the UI parses JSON unconditionally.
+		writeJSON(w, http.StatusOK, convertResponse{Errors: []string{err.Error()}})
 		return
 	}
 	p, err := manifest.Decode(body)
@@ -145,11 +171,49 @@ func (s *Server) save(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := writeManifest(path, out); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"name": name})
+}
+
+// writeManifest replaces path atomically and keeps the previous contents.
+// The manifests directory is the one the batch renderer globs, and a single
+// unparseable file fails the whole run: writing a temp file in the same
+// directory and renaming it over the target means readers see the old file or
+// the new one, never a half-written one. Re-serializing also drops the
+// comments a hand-written manifest carries, so the old bytes are kept as
+// <name>.yaml.bak — a suffix outside the *.yaml/*.yml globs, so the backup is
+// never itself read as a manifest.
+func writeManifest(path string, out []byte) error {
+	existing, err := os.ReadFile(path)
+	hadFile := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// Dot-prefixed: the *.yaml glob skips it even in the window before rename.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".manifest-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // a no-op once the rename below succeeds
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil { // CreateTemp makes 0600
+		return err
+	}
+	if hadFile {
+		if err := os.WriteFile(path+".bak", existing, 0o644); err != nil {
+			return err
+		}
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
