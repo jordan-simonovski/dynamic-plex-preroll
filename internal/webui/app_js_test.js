@@ -1,6 +1,9 @@
-// Node check for the pure bits of static/app.js. The file is a browser script
-// with no module system, so it runs inside a vm context on top of a stub DOM
-// just big enough to boot it; the assertions then call its functions directly.
+// Node check for the pure bits of the static scripts (util.js, state.js and
+// app.js's convert loop). They are browser scripts with no module system, so
+// they run inside a vm context — which shares one global lexical scope across
+// runInContext calls, exactly like classic <script> tags — on top of a stub DOM
+// just big enough to boot them; the assertions then call their functions
+// directly.
 //
 //   node internal/webui/app_js_test.js
 //
@@ -57,11 +60,11 @@ const ctx = vm.createContext({
 });
 
 const staticDir = path.join(__dirname, "static");
-for (const f of ["providers.js", "app.js"]) {
+for (const f of ["providers.js", "util.js", "state.js", "api.js", "sections.js", "app.js"]) {
   vm.runInContext(fs.readFileSync(path.join(staticDir, f), "utf8"), ctx, { filename: f });
 }
-// `state` is a top-level `let`, so it lives in the context's lexical scope
-// rather than on the global object; this bridge reaches it.
+// `state` is a top-level `let` in state.js, so it lives in the context's
+// shared script scope rather than on the global object; this bridge reaches it.
 vm.runInContext(`globalThis.__t = {
   getState: () => state,
   setState: (s) => { state = s; },
