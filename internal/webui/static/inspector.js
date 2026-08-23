@@ -195,7 +195,7 @@ function sceneKindFields(sc, i, base) {
         "grid: up to 4 items 2×2 · sequence: trailers back to back")}
       ${field("Dim", `<input type="range" data-path="${esc(base)}.background.dim" data-type="number" min="0" max="1" step="0.05" value="${esc(bg.dim ?? 0)}">`,
         "0 = untouched, 1 = black — keeps overlaid text legible")}
-      ${field("Item limit", numInput(`${base}.background.limit`, bg.limit ?? 0, { int: true, min: 0 }), "0 = all")}` : ""}`;
+      ${field("Item limit", numInput(`${base}.background.limit`, bg.limit ?? 0, { int: true, min: 0 }), "0 uses the default of 4")}` : ""}`;
 }
 
 // layoutSection is the layout the selected scene draws: its name, its font, its

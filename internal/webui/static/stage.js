@@ -105,11 +105,12 @@ const STAGE_DEFAULT_VARS = {
 
 // stageVars is the context a TEXT element sees: engine.go's sceneContext —
 // globals plus the scene's own vars. A clips scene's label layout additionally
-// sees the current item (engine.go itemVars), and the stage previews item 1.
+// sees the current item (engine.go itemVars), and the stage previews the first
+// item the renderer will actually use — see stageFirstPlayable below.
 function stageVars(scene) {
   const vars = { ...STAGE_DEFAULT_VARS, ...stageData.vars };
   if (scene && scene.kind === "clips") {
-    Object.assign(vars, itemVars(stageItems(scene.source)[0]));
+    Object.assign(vars, itemVars(stageFirstPlayable(stageItems(scene.source))));
   } else {
     // engine.go's sceneContext (engine.go:339-348) overlays Scene.Vars only
     // for a render scene; a clips label's context is itemVars alone
@@ -119,6 +120,24 @@ function stageVars(scene) {
   }
   return vars;
 }
+// stageFirstPlayable is the item the RENDER draws its first label over.
+// engine.go's clips branch skips an item with an empty MediaURL before it
+// renders anything (engine.go:196-199), so the first label belongs to the first
+// PLAYABLE item, not the first item. data.go sends hasMedia for exactly this
+// question and timeline.js's clip count already filters on it, so the rail and
+// the stage disagreed. hasMedia !== false, not truthiness: an item from a source
+// that does not report the field at all is assumed playable, matching stageItems'
+// placeholders. Falling back to items[0] keeps an all-unplayable source drawing
+// something rather than blank — the note under the canvas is what says the
+// render will skip it.
+//
+// NOT used for a LIST element: render.go's list branch draws every item with no
+// MediaURL check at all (render.go:227-239), so a list's first row really is
+// items[0].
+function stageFirstPlayable(items) {
+  return items.find((i) => i.hasMedia !== false) || items[0];
+}
+
 // render.go itemContext: a LIST element's item template sees the item and
 // nothing else — no globals, no scene vars. Mirrored rather than smoothed over,
 // so `{{ .Period }}` inside a list item shows up unresolved here exactly as it
