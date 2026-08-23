@@ -305,26 +305,53 @@ const DOUBLE_FEATURE = () => ({
 }
 
 // ---- add-scene / remove-scene-selected -------------------------------------
+// Task 15 review carry-over: select-scene-index clears selection.dataSource so
+// selecting a scene leaves the data-source panel (see the critical-1 block
+// above); add-scene, remove-scene-selected and moveScene are the three
+// siblings that changed selection.sceneIndex without doing the same, leaving
+// a stale data panel open in the inspector until the user clicked something
+// else. All three get the identical one-line fix.
 {
   __t.setState(DOUBLE_FEATURE());
   __t.select(1, null);
+  __t.getSelection().dataSource = "movieTrailers";
   actions["add-scene"]({ kind: "render" });
   const st1 = __t.getState();
   eq("add-scene: appended", st1.scenes.length, 5);
   eq("add-scene: selects the new scene", __t.getSelection().sceneIndex, 4);
   eq("add-scene: clears any element selection", __t.getSelection().element, null);
   eq("add-scene: the new scene is the requested kind", st1.scenes[4].kind, "render");
+  eq("add-scene [fix]: leaves the data-source panel", __t.getSelection().dataSource, null);
 
+  __t.getSelection().dataSource = "movieTrailers";
   actions["remove-scene-selected"]();
   const st2 = __t.getState();
   eq("remove-scene: the selected scene is gone", st2.scenes.length, 4);
   eq("remove-scene: selection lands on a neighbour, not out of range",
     __t.getSelection().sceneIndex, 3);
+  eq("remove-scene [fix]: leaves the data-source panel", __t.getSelection().dataSource, null);
 
   __t.setState({ scenes: [] });
   __t.select(0, null);
   check("remove-scene: a no-op on an empty manifest does not throw",
     (() => { try { actions["remove-scene-selected"](); return true; } catch { return false; } })());
+
+  // moveScene: the drag-reorder path (and its keyboard equivalent, both of
+  // which call moveScene directly) gets the same fix, applied once inside
+  // moveScene itself so every caller gets it rather than patching each site.
+  __t.setState({ scenes: [{ id: "a" }, { id: "b" }, { id: "c" }] });
+  __t.select(0, null);
+  __t.getSelection().dataSource = "movieTrailers";
+  moveScene(0, 2);
+  eq("moveScene [fix]: leaves the data-source panel", __t.getSelection().dataSource, null);
+
+  // A no-op move (out of range, or from === to) must not even need to clear
+  // it — but does no harm either way; this just documents it doesn't throw.
+  __t.setState({ scenes: [{ id: "a" }] });
+  __t.getSelection().dataSource = "movieTrailers";
+  moveScene(0, 0);
+  eq("moveScene: a no-op move leaves dataSource untouched (nothing moved)",
+    __t.getSelection().dataSource, "movieTrailers");
 }
 
 if (failures) {

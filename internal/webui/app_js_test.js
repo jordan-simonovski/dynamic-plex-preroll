@@ -21,7 +21,7 @@ const vm = require("vm");
 const canvasStub = new Proxy({ fillStyle: "", font: "" }, { get: (t, k) => (k in t ? t[k] : () => ({ width: 0 })) });
 function makeEl() {
   const attrs = {};
-  return {
+  const el = {
     attrs,
     innerHTML: "", textContent: "", value: "", checked: false,
     clientWidth: 800, width: 0, height: 0, style: {},
@@ -37,7 +37,14 @@ function makeEl() {
     setAttribute(a, v) { attrs[a] = v; },
     toggleAttribute(a, on) { if (on) attrs[a] = ""; else delete attrs[a]; },
     focus() {},
+    // Task 18's new-picker is a <dialog>, same as file-picker/template-picker
+    // — modalOpen is just for this file's own assertions, matching
+    // filepicker_test.js's convention.
+    modalOpen: false,
+    showModal() { el.modalOpen = true; },
+    close() { el.modalOpen = false; },
   };
+  return el;
 }
 const els = new Map();
 const document = {
@@ -63,9 +70,32 @@ function boundInput(path, value) {
 // Requests to /api/convert are parked in `pending` so a test can resolve them
 // out of order; everything else answers immediately.
 const pending = [];
-function fetchStub(url) {
+// manifestList/manifestFixtures drive /api/manifests and /api/manifests/<name>
+// for Task 18's tests below; both default to "nothing on disk", matching the
+// generic []-returning fallback every other stub URL got before this file
+// existed. fetchLog records every call (url + method) so a test can prove a
+// PUT never reached the network — the mutation-check for the clobber fix.
+let manifestList = [];
+const manifestFixtures = {};
+const fetchLog = [];
+function fetchStub(url, opts) {
+  fetchLog.push({ url, method: (opts && opts.method) || "GET" });
   if (url === "/api/convert") {
     return new Promise((resolve) => pending.push(resolve));
+  }
+  if (url === "/api/manifests") {
+    return Promise.resolve(reply(manifestList));
+  }
+  const gm = /^\/api\/manifests\/([^/]+)$/.exec(url);
+  if (gm) {
+    const name = decodeURIComponent(gm[1]);
+    if ((opts && opts.method) === "PUT") {
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }
+    if (!Object.hasOwn(manifestFixtures, name)) {
+      return Promise.resolve({ ok: false, text: async () => `${name}: not found` });
+    }
+    return Promise.resolve(reply(manifestFixtures[name]));
   }
   return Promise.resolve({ ok: true, json: async () => [] });
 }
@@ -92,9 +122,17 @@ for (const f of ["providers.js", "util.js", "geometry.js", "interact.js", "state
 }
 // `state` is a top-level `let` in state.js, so it lives in the context's
 // shared script scope rather than on the global object; this bridge reaches it.
+// openedFile is a top-level `let` in app.js (same shared-scope reasoning) and
+// actions a top-level `const` in state.js — Task 18's clobber-protection
+// proof needs to read/set the former and drive the latter's "new-empty" /
+// "new-from" entries directly, the same way timeline_test.js's own bridge
+// already exposes `actions`.
 vm.runInContext(`globalThis.__t = {
   getState: () => state,
   setState: (s) => { state = s; },
+  getOpenedFile: () => openedFile,
+  setOpenedFile: (v) => { openedFile = v; },
+  actions,
 };`, ctx);
 
 // The renderers are exercised at boot above; from here they only add noise.
@@ -275,8 +313,146 @@ function check(name, cond, detail) {
   bound.length = 0;
 }
 
-// convert(): responses that land out of order must not overwrite newer state.
+// ---- Task 18: start from an existing manifest instead of an empty form ----
 (async () => {
+
+// summariseManifest: what a starting point is made of, so the chooser reads
+// as a menu of approaches rather than a list of filenames.
+{
+  const { summariseManifest } = ctx;
+  const s1 = summariseManifest({ scenes: [{ kind: "render" }, { kind: "render" }, { kind: "clips" }] });
+  check("summariseManifest: counts scene kinds", s1 === "2 render, 1 clips", s1);
+
+  const s2 = summariseManifest({
+    scenes: [{ kind: "clips" }],
+    data: { a: { provider: "plex.top" }, b: { provider: "plex.top" }, c: { provider: "plex.trailers" } },
+  });
+  check("summariseManifest: names the unique data providers, order preserved, no repeats",
+    s2 === "1 clips · from plex.top, plex.trailers", s2);
+
+  check("summariseManifest: no scenes says so",
+    summariseManifest({ scenes: [] }) === "no scenes");
+  check("summariseManifest: no data sources omits the 'from' clause",
+    summariseManifest({ scenes: [{ kind: "image" }] }) === "1 image");
+}
+
+// openNewManifestDialog: Empty first, then every manifest with its summary;
+// an unreadable one says so instead of throwing; nothing to offer degrades to
+// a message rather than an empty heading.
+{
+  manifestList = ["a.yaml", "b.yaml"];
+  manifestFixtures["a.yaml"] = { scenes: [{ kind: "render" }], data: { x: { provider: "plex.top" } } };
+  // b.yaml is deliberately left out of manifestFixtures: apiGetManifest's GET
+  // then 404s, exactly like a manifest that fails to parse on the server.
+  confirmAnswer = true;
+  document.querySelector("#new-picker").modalOpen = false;
+  await ctx.openNewManifestDialog();
+  const body = document.querySelector("#new-picker-body").innerHTML;
+  check("chooser: offers Empty manifest first",
+    body.indexOf("Empty manifest") < body.indexOf("a.yaml"), body);
+  check("chooser: shows a.yaml's summary",
+    body.includes("1 render · from plex.top"), body);
+  check("chooser: an unreadable manifest says so instead of throwing",
+    body.includes("could not be read"), body);
+  check("chooser: the dialog was actually opened",
+    document.querySelector("#new-picker").modalOpen === true);
+
+  // Degrade gracefully: no other manifests on disk.
+  manifestList = [];
+  await ctx.openNewManifestDialog();
+  const emptyBody = document.querySelector("#new-picker-body").innerHTML;
+  check("chooser: still offers Empty manifest with nothing else on disk",
+    emptyBody.includes("Empty manifest"), emptyBody);
+  check("chooser: says so instead of an empty 'Start from an existing manifest' list",
+    emptyBody.includes("No other manifests"), emptyBody);
+  check("chooser: does not render the section heading over an empty list",
+    !emptyBody.includes("Start from an existing manifest"), emptyBody);
+
+  delete manifestFixtures["a.yaml"];
+}
+
+// The discard confirm: New must still ask before it discards. It now gates
+// the dialog itself, covering both of the dialog's outcomes (empty or
+// template) — a deviation from the brief, which never confirmed at all.
+{
+  document.querySelector("#new-picker").modalOpen = false;
+  confirmAnswer = false;
+  await ctx.openNewManifestDialog();
+  check("chooser: declining the discard confirm never opens the dialog",
+    document.querySelector("#new-picker").modalOpen === false);
+  confirmAnswer = true;
+}
+
+// ---- the clobber-protection proof ------------------------------------------
+// The dangerous path named in the task: pick a shipped manifest as a starting
+// point, and Save must not be able to land on the file it came from.
+// Reproduced exactly as it happens in the app — the user had this very
+// manifest open (openedFile points at it) before clicking New, which is
+// precisely the case saveManifest()'s `openedFile || derived` would clobber
+// through if startFromTemplate left openedFile untouched.
+{
+  const SOURCE = {
+    name: "Top Movies Trailer Wall", output: "output/top-movies-trailer-wall.mp4",
+    data: { top: { provider: "plex.top", params: {} } },
+    layouts: {}, scenes: [{ kind: "clips", source: "top", perClip: 4, label: "" }],
+  };
+  manifestFixtures["top-movies-trailer-wall.yaml"] = SOURCE;
+  manifestList = ["top-movies-trailer-wall.yaml"];
+
+  ctx.__t.setState(JSON.parse(JSON.stringify(SOURCE)));
+  ctx.__t.setOpenedFile("top-movies-trailer-wall.yaml");
+
+  await ctx.startFromTemplate("top-movies-trailer-wall.yaml");
+
+  const copy = ctx.__t.getState();
+  check("clobber: the copy's name is cleared", copy.name === "", copy.name);
+  check("clobber: the copy's output is cleared", copy.output === "", copy.output);
+  check("clobber: openedFile no longer names the source — the ACTUAL clobber vector, since saveManifest() targets openedFile before it ever looks at state.name",
+    ctx.__t.getOpenedFile() === "", ctx.__t.getOpenedFile());
+  check("clobber: the design itself came across, not just cleared to nothing",
+    copy.scenes.length === 1 && copy.data.top.provider === "plex.top", JSON.stringify(copy));
+
+  // Mutation check: exercise the REAL saveManifest(), not just the two fields
+  // above, and prove no PUT reaches the source's filename. This is exactly
+  // what would fail if `openedFile = "";` were ever deleted from
+  // startFromTemplate again: derived would still be "" (no name typed yet),
+  // so the "give it a name" refusal would not fire either, and the save
+  // would go straight through to /api/manifests/top-movies-trailer-wall.yaml.
+  fetchLog.length = 0;
+  flashes.length = 0;
+  await ctx.saveManifest();
+  const putToSource = fetchLog.some((c) => c.method === "PUT" && c.url === "/api/manifests/top-movies-trailer-wall.yaml");
+  check("clobber: Save never PUTs to the source manifest", !putToSource, JSON.stringify(fetchLog));
+  check("clobber: no PUT went out at all — the refusal short-circuits before the network",
+    !fetchLog.some((c) => c.method === "PUT"), JSON.stringify(fetchLog));
+  check("clobber: Save is refused for lacking a name, not silently applied",
+    flashes.length === 1 && flashes[0].isError === true && /name/i.test(flashes[0].msg),
+    JSON.stringify(flashes));
+}
+
+// new-empty and new-from also reset openedFile — the same clobber vector as
+// startFromTemplate above, checked directly through their action handlers
+// (the click path a real dialog button drives) rather than the function.
+{
+  ctx.__t.setOpenedFile("some-open-file.yaml");
+  ctx.__t.actions["new-empty"]();
+  check("new-empty: clears openedFile too", ctx.__t.getOpenedFile() === "", ctx.__t.getOpenedFile());
+  check("new-empty: state is a blank manifest", ctx.__t.getState().scenes.length === 0);
+
+  manifestFixtures["c.yaml"] = { name: "c", scenes: [], data: {} };
+  ctx.__t.setOpenedFile("some-open-file.yaml");
+  await ctx.__t.actions["new-from"]({ name: "c.yaml" });
+  check("new-from: clears openedFile too", ctx.__t.getOpenedFile() === "", ctx.__t.getOpenedFile());
+  check("new-from: the copy's name is cleared even though the source had one",
+    ctx.__t.getState().name === "", ctx.__t.getState().name);
+  delete manifestFixtures["c.yaml"];
+}
+
+pending.length = 0; // drop every convert() this block fired off; see below
+
+})().then(async () => {
+
+// convert(): responses that land out of order must not overwrite newer state.
   const pane = document.querySelector("#yaml code");
   const first = ctx.convert();
   const second = ctx.convert();
@@ -292,4 +468,4 @@ function check(name, cond, detail) {
     process.exit(1);
   }
   console.log("app.js checks passed");
-})();
+});

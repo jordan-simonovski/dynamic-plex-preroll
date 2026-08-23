@@ -73,6 +73,7 @@ function renderTimeline() {
 // the same position — the user dragged a thing, not an index.
 function moveScene(from, to) {
   if (from === to || from < 0 || to < 0 || from >= state.scenes.length || to >= state.scenes.length) return;
+  selection.dataSource = null; // leave the data panel
   const [moved] = state.scenes.splice(from, 1);
   state.scenes.splice(to, 0, moved);
   if (selection.sceneIndex === from) selection.sceneIndex = to;
@@ -160,6 +161,7 @@ actions["add-scene"] = (d) => {
   state.scenes.push(sceneDefaults(d.kind));
   selection.sceneIndex = state.scenes.length - 1;
   selection.element = null;
+  selection.dataSource = null; // leave the data panel
   onStateChange();
 };
 actions["remove-scene-selected"] = () => {
@@ -167,5 +169,6 @@ actions["remove-scene-selected"] = () => {
   state.scenes.splice(selection.sceneIndex, 1);
   selection.sceneIndex = Math.max(0, Math.min(selection.sceneIndex, state.scenes.length - 1));
   selection.element = null;
+  selection.dataSource = null; // leave the data panel
   onStateChange();
 };
