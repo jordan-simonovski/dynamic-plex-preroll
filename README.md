@@ -182,8 +182,16 @@ manifest directory, so the next render run (`docker compose run plex-pre-roll`
 with `MANIFEST_DIR` set) picks it up. Saves are strict: an invalid manifest is
 refused rather than written.
 
-The UI has no auth — it can read, write and delete files in `MANIFEST_DIR`.
-Keep it on your LAN; don't expose port 8382 to the internet.
+Saving rewrites the file from the manifest structure, which drops any comments
+you hand-wrote in it. The previous contents are kept alongside as
+`<name>.yaml.bak` (the renderer ignores `.bak` files), and writes are atomic —
+a crash mid-save can never leave a truncated manifest for the renderer to trip
+over.
+
+The UI has no auth — it can read, write and delete files in `MANIFEST_DIR`. It
+only accepts requests addressed to `localhost` or a bare IP, so a malicious web
+page can't reach it via DNS rebinding, but that is the extent of it: keep it on
+your LAN and don't expose port 8382 to the internet.
 
 ## Configuration
 
