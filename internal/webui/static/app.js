@@ -223,7 +223,7 @@ function onEditorClick(e) {
 // The inspector and the timeline rail use the same data-path/data-action
 // conventions as the phase-1 form, so they get the same three delegated
 // listeners rather than their own.
-for (const root of ["#editor", "#inspector", "#rail", "#file-picker"]) {
+for (const root of ["#editor", "#inspector", "#rail", "#file-picker", "#template-picker"]) {
   const el = $(root);
   el.addEventListener("input", onEditorInput);
   el.addEventListener("change", onEditorChange);

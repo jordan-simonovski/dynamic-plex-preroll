@@ -202,6 +202,121 @@ function previewFont(path) {
     .catch(() => { /* an unreadable font simply shows in the default face */ });
 }
 
+// ---- template picker ---------------------------------------------------
+// The template context differs by WHERE the template appears — this is the
+// whole reason a bare chip list (the retired templateChips in inspector.js)
+// was wrong: it listed every variable everywhere, including ones that fail at
+// render in that spot. Three real contexts, verified against the Go source:
+//
+//   - a list element's ROW template: render.go's itemContext (render.go:294-
+//     303) builds a FRESH map — Rank/Name/Views only. No globals: Render()
+//     runs with Option("missingkey=error") (templating.go:33), so a global
+//     used here is a render-time failure, not a blank.
+//   - a text element inside a CLIP LABEL layout (its scene has kind "clips"):
+//     engine.go's itemVars (engine.go:229-237) clones the data context
+//     (globals) and overlays the item's fields onto it — both are in scope
+//     together.
+//   - a text element inside a RENDER scene's own layout: engine.go's
+//     sceneContext (engine.go:339-348) overlays the scene's own vars onto the
+//     data context (globals) — item fields are never in scope here.
+//
+// fieldScope is what inspector.js knows statically when it renders the
+// button ("item" for a list's row template, "text" for everything else);
+// sceneKind resolves the rest, exactly like stage.js's own stageVars() does
+// for the live preview (stage.js:106-121) — this file deliberately mirrors
+// that function's scope split rather than re-deriving it.
+function templateScopeKind(fieldScope, sceneKind) {
+  if (fieldScope === "item") return "item";
+  return sceneKind === "clips" ? "clip-label" : "scene-text";
+}
+
+// templateGroups is the picker's whole scope decision: which catalogue
+// groups to show, and which variant of each helper (item-bound or
+// global-bound — see providers.js's TEMPLATE_CATALOG.funcs). Pure and
+// DOM-free so it can be checked hard in Node: get this wrong and the picker
+// inserts a variable the render context does not have.
+function templateGroups(fieldScope, sceneKind) {
+  const kind = templateScopeKind(fieldScope, sceneKind);
+  const hasItemFields = kind === "item" || kind === "clip-label";
+  const hasGlobals = kind === "clip-label" || kind === "scene-text";
+  const funcs = TEMPLATE_CATALOG.funcs.map((f) => ({
+    insert: hasItemFields ? f.insert : f.globalInsert,
+    label: f.label,
+    explain: f.explain,
+  }));
+  const groups = [];
+  if (hasItemFields) groups.push(["Item fields", TEMPLATE_CATALOG.itemFields]);
+  if (hasGlobals) groups.push(["Globals", TEMPLATE_CATALOG.globals]);
+  groups.push(["Helpers", funcs]);
+  return groups;
+}
+
+// scope is "item" for a list's row template (where .Rank/.Name/.Views are in
+// scope) and "text" for everything else. Which further groups show depends on
+// the scene too (templateGroups above) — a text element behaves differently
+// inside a clip label than inside a render scene's own layout.
+function templateButton(path, scope) {
+  return `<button type="button" class="btn ghost small" data-action="insert-template"
+    data-target="${esc(path)}" data-scope="${esc(scope)}">Insert variable…</button>`;
+}
+
+let templateTarget = null;
+
+// templateExampleDisclosure is templateExample's honesty check, surfaced once
+// per open rather than once per row: are these live values, or is Plex simply
+// not configured (so every global is a placeholder, exactly like the stage's
+// own note — stage.js's stageNotes/stageDataReason), or is the previewed item
+// itself a placeholder (stage.js's stagePlaceholderSources)? An example that
+// looks live but isn't is worse than no example at all.
+function templateExampleDisclosure(fieldScope, scene) {
+  const kind = templateScopeKind(fieldScope, scene && scene.kind);
+  if (kind === "item" || kind === "clip-label") {
+    const source = kind === "item"
+      ? (elementPath() && currentLayout().elements[selection.element].source)
+      : (scene && scene.source);
+    if (source && !stageResolved(source)) {
+      return `Showing a placeholder item for "${source}" — connect Plex to preview a real one.`;
+    }
+  }
+  if (kind !== "item" && !Object.keys(stageData.vars).length) {
+    return "Plex is not configured — global examples use placeholder values.";
+  }
+  return "";
+}
+
+function openTemplatePicker(path, scope) {
+  templateTarget = path;
+  const scene = currentScene();
+  const groups = templateGroups(scope, scene && scene.kind);
+  const note = templateExampleDisclosure(scope, scene);
+  $("#template-picker-body").innerHTML =
+    (note ? `<p class="muted">${esc(note)}</p>` : "") +
+    groups.map(([title, entries]) => `
+    <h3>${esc(title)}</h3>
+    ${entries.map((e) => `<button type="button" class="template-row" data-action="pick-template" data-insert="${esc(e.insert)}">
+      <code>${esc(e.insert)}</code>
+      <span class="template-explain">${esc(e.explain)}</span>
+      <span class="template-example">→ ${esc(templateExample(e.insert, scope))}</span>
+    </button>`).join("")}`).join("");
+  $("#template-picker").showModal();
+}
+
+// templateExample renders the snippet against the SAME data the stage draws
+// with, so the example is what the user will actually get — real film titles
+// when Plex is connected, the placeholders when it is not (disclosed above).
+// "item" scope mirrors render.go's itemContext exactly (item fields, nothing
+// else, reusing stage.js's own itemVars() rather than re-deriving it);
+// everything else mirrors stageVars(), which already models the clip-label/
+// render-scene split.
+function templateExample(snippet, scope) {
+  const scene = currentScene();
+  if (templateScopeKind(scope, scene && scene.kind) === "item") {
+    const el = elementPath() ? currentLayout().elements[selection.element] : null;
+    return stageTemplate(snippet, itemVars(stageItems(el && el.source)[0]));
+  }
+  return stageTemplate(snippet, stageVars(scene));
+}
+
 // Registering actions here (rather than app.js) matches every other view
 // file's convention — inspector.js and timeline.js do the same. Guarded
 // because pickers_test.js requires this file directly under plain Node,
@@ -218,6 +333,36 @@ if (typeof actions !== "undefined") {
     onStateChange();
   };
   actions["close-file-picker"] = () => { $("#file-picker").close(); filePickerTarget = null; };
+
+  actions["insert-template"] = (d) => openTemplatePicker(d.target, d.scope);
+  actions["close-template-picker"] = () => { $("#template-picker").close(); templateTarget = null; };
+  actions["pick-template"] = (d) => {
+    if (!templateTarget) return;
+    // Insert AT THE CURSOR of the field the button belongs to, so a snippet
+    // can be dropped into the middle of an existing string. Appending would
+    // make the picker useless for anything but an empty field.
+    const input = document.querySelector(`[data-path="${CSS.escape(templateTarget)}"]`);
+    const snippet = d.insert;
+    if (input) {
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      input.value = input.value.slice(0, start) + snippet + input.value.slice(end);
+      setPath(state, templateTarget, input.value);
+      // Focus (and place the caret) BEFORE closing the dialog: the WHATWG
+      // "dialog closing steps" only restore focus to the invoking button if
+      // focus is still INSIDE the dialog when close() runs. Moving focus out
+      // first is what makes the caret land in the field being edited, not
+      // back on "Insert variable…".
+      input.focus();
+      input.setSelectionRange(start + snippet.length, start + snippet.length);
+    } else {
+      setPath(state, templateTarget, String(getPath(state, templateTarget) ?? "") + snippet);
+    }
+    $("#template-picker").close();
+    templateTarget = null;
+    renderStage();
+    scheduleConvert();
+  };
 }
 
 // Node: exported for pickers_test.js. Browser: the functions above are already

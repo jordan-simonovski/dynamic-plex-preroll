@@ -90,33 +90,27 @@ function elementInspector(base, el) {
     return `<h2>List element</h2>${back}
       <div class="stack">
         ${field("Data source", select(`${base}.source`, el.source, Object.keys(state.data)), "Which feed this list iterates")}
-        ${field("Row template", textInput(`${base}.item`, el.item, { placeholder: "{{ .Rank }}. {{ .Name }}" }))}
+        ${field("Row template", textInput(`${base}.item`, el.item, { placeholder: "{{ .Rank }}. {{ .Name }}" }) +
+          templateButton(`${base}.item`, "item"),
+          "One line per item from the data source")}
         ${field("X", numInput(`${base}.x`, el.x))}
         ${field("First row Y", numInput(`${base}.startY`, el.startY), "The first row's baseline sits exactly here")}
         ${field("Row spacing", numInput(`${base}.stepY`, el.stepY))}
         ${common}
       </div>
-      ${templateChips([...ITEM_FIELDS, ...TEMPLATE_FUNCS.map((f) => `{{ ${f} ... }}`)])}
       <button class="btn ghost danger" data-action="remove-selected-element">Remove element</button>`;
   }
   return `<h2>Text element</h2>${back}
     <div class="stack">
-      ${field("Text", `<textarea data-path="${esc(base)}.text">${esc(el.text)}</textarea>`,
+      ${field("Text", `<textarea data-path="${esc(base)}.text">${esc(el.text)}</textarea>` +
+        templateButton(`${base}.text`, "text"),
         "Newlines stack; the block is centred vertically on Y")}
       ${field("X", numInput(`${base}.x`, el.x))}
       ${field("Y", numInput(`${base}.y`, el.y))}
       ${field("Line height", numInput(`${base}.lineHeight`, el.lineHeight ?? 0), "0 = 1.2 × the font size")}
       ${common}
     </div>
-    ${templateChips(TEMPLATE_VARS)}
     <button class="btn ghost danger" data-action="remove-selected-element">Remove element</button>`;
-}
-
-// The chips are the only place the available template variables and functions
-// are written down. They came across from the retired Layouts card unchanged;
-// Task 14's template picker is what replaces them.
-function templateChips(items) {
-  return `<div class="chips">${items.map((c) => `<code>${esc(c)}</code>`).join("")}</div>`;
 }
 
 // ---- scene -----------------------------------------------------------------

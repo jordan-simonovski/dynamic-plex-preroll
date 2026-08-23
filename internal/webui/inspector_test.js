@@ -198,7 +198,8 @@ const FIXTURE = () => ({
   check("audit: the element list is a keyboard path to the selection",
     scene.includes(`<button type="button" class="element-row`), scene);
 
-  // Text element: text, x, y, size, colour, align, line height, remove, chips.
+  // Text element: text, x, y, size, colour, align, line height, remove, the
+  // template picker's Insert button (Task 14 — replaces the retired chips).
   __t.select(0, 0);
   renderInspector();
   const text = panel();
@@ -207,7 +208,9 @@ const FIXTURE = () => ({
     has(`audit: text element ${name}`, text, `data-path="layouts.main.elements.0.${p}"`);
   }
   has("audit: text element remove", text, `data-action="remove-selected-element"`);
-  has("audit: text element template chips", text, "{{ .Period }}");
+  has("audit: text element has the template picker's Insert button", text, `data-action="insert-template"`);
+  has("audit: the Insert button targets the text field", text, `data-target="layouts.main.elements.0.text"`);
+  has("audit: the Insert button is scoped to text (globals, no item fields)", text, `data-scope="text"`);
   has("audit: back to the scene", text, `data-action="select-scene"`);
 
   // List element: source, item, x, startY, stepY, size, colour, align, remove.
@@ -220,7 +223,9 @@ const FIXTURE = () => ({
     has(`audit: list element ${name}`, list, `data-path="layouts.main.elements.1.${p}"`);
   }
   has("audit: list element remove", list, `data-action="remove-selected-element"`);
-  has("audit: list element item chips", list, "{{ .Rank }}");
+  has("audit: list element has the template picker's Insert button", list, `data-action="insert-template"`);
+  has("audit: the Insert button targets the row template field", list, `data-target="layouts.main.elements.1.item"`);
+  has("audit: the Insert button is scoped to item fields (no globals)", list, `data-scope="item"`);
   check("audit: a list element has no y (its anchor is startY)",
     !list.includes(`data-path="layouts.main.elements.1.y"`), list);
 }

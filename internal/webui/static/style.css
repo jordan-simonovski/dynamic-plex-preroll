@@ -91,12 +91,6 @@ input[type="checkbox"] { width: auto; }
 .btn.danger { color: var(--danger); }
 
 .kv { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 6px; margin: 4px 0; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-.chips code {
-  font-family: var(--mono); font-size: 11px;
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: 999px; padding: 2px 8px; color: var(--muted);
-}
 .muted { color: var(--muted); font-size: 12px; margin: 4px 0 10px; }
 .empty { color: var(--muted); font-style: italic; }
 
@@ -259,3 +253,15 @@ dialog.picker::backdrop { background: rgba(0, 0, 0, .6); }
 .file-thumb { grid-area: prev; max-height: 90px; max-width: 100%; border-radius: 4px; margin-top: 6px; }
 .file-sample { grid-area: prev; font-size: 26px; margin-top: 6px; }
 .file-audio { grid-area: prev; width: 100%; margin-top: 6px; }
+
+/* ---- template picker (Task 14) ---------------------------------------------- */
+.btn.small { padding: 4px 8px; font-size: 11px; margin-top: 4px; }
+.template-row {
+  display: block; width: 100%; text-align: left; margin-bottom: 6px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; color: var(--text); font: inherit; cursor: pointer;
+}
+.template-row:hover { border-color: var(--accent); }
+.template-row code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.template-explain { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+.template-example { display: block; font-family: var(--mono); font-size: 11px; margin-top: 4px; }
