@@ -207,7 +207,12 @@ func (s *Server) allowImageURL(raw string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("only http(s) image URLs are proxied")
 	}
-	if plexImageHosts[strings.ToLower(u.Hostname())] {
+	// Port-aware like the configured-server check below: Hostname() alone
+	// would let images.plex.tv:22 through this branch while plex:32401 is
+	// refused by the next one, and the two halves of one boundary should not
+	// disagree about what a host is. The CDN is only ever reached on the
+	// scheme's default port, so an explicit port is enough to disqualify.
+	if u.Port() == "" && plexImageHosts[strings.ToLower(u.Hostname())] {
 		return nil
 	}
 	base, err := url.Parse(s.Plex.BaseURL)

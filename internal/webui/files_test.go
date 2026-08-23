@@ -150,6 +150,34 @@ func TestFilesRawRejectsSiblingWithSharedPrefix(t *testing.T) {
 	}
 }
 
+// A media root is a directory the user shares over SMB. Anything droppable in
+// there gets served same-origin with the manifest-save/delete/render API, and
+// http.ServeFile sets the real Content-Type — so an .html served from here is
+// stored XSS. nosniff does not cover it: it stops the browser guessing a type,
+// not the server declaring one.
+func TestFilesRawRefusesNonMediaTypes(t *testing.T) {
+	ts, root := mediaServer(t)
+	dir := filepath.Join(root, "common")
+	for name, body := range map[string]string{
+		"x.html": "<script>fetch('/api/manifests/a.yaml',{method:'DELETE'})</script>",
+		"x.svg":  "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>",
+		"x.txt":  "plain",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rel := filepath.Base(root) + "/common/" + name
+		res := do(t, "GET", ts.URL+"/api/files/raw?path="+rel, "")
+		if res.StatusCode == 200 {
+			t.Errorf("%s was served with Content-Type %q; only media kinds may be served", name, res.Header.Get("Content-Type"))
+		}
+		got, _ := io.ReadAll(res.Body)
+		if strings.Contains(string(got), "<script>") {
+			t.Errorf("%s content reached the browser", name)
+		}
+	}
+}
+
 func TestFileKind(t *testing.T) {
 	for name, want := range map[string]string{
 		"a.TTF": "font", "a.otf": "font", "a.woff2": "font",
