@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pre-roll Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Pre-roll <span>Studio</span></h1>
+  <div class="topbar-actions" id="manifest-actions"></div>
+  <div class="topbar-actions" id="render-actions"></div>
+  <span class="spacer"></span>
+  <button class="btn ghost" id="toggle-yaml" aria-expanded="false" aria-controls="yaml-drawer">YAML</button>
+  <span id="status" aria-live="polite"></span>
+</header>
+
+<main class="studio">
+  <nav class="rail" id="rail" aria-label="Timeline"></nav>
+
+  <section class="stage-pane">
+    <div class="stage-bar">
+      <span id="stage-label" class="muted"></span>
+      <span class="spacer"></span>
+      <label class="check"><input type="checkbox" id="toggle-safe"> Safe area</label>
+    </div>
+    <div class="stage-frame" id="stage-frame">
+      <!-- role="application" is kept: the canvas is a real widget (Tab cycles
+           its elements, arrows nudge, Delete removes), and only that role
+           stops a screen reader swallowing the arrow keys for browse-mode
+           navigation. What made it painful was the label churning on every
+           redraw; stage.js now keeps this name stable and sends the moving
+           detail to #stage-live instead. -->
+      <canvas id="stage" tabindex="0" role="application" aria-label="Scene preview"></canvas>
+    </div>
+    <p class="muted">Click an element to select it, drag to move, drag the corner handle to resize. With the stage focused: Tab/Shift+Tab steps between elements, arrows nudge (Shift for 10px), Delete removes, Escape selects the scene.</p>
+    <p class="muted" id="stage-note" aria-live="polite"></p>
+    <!-- The stage's running commentary: what is selected and where it is,
+         announced without renaming the focused canvas. -->
+    <p id="stage-live" class="sr-only" aria-live="polite"></p>
+    <section class="render-panel" id="render-panel" hidden>
+      <div class="preview-head">
+        <h2>Render preview</h2>
+        <span id="render-status" aria-live="polite"></span>
+      </div>
+      <video id="render-video" controls playsinline hidden></video>
+      <pre id="render-log" class="render-log"></pre>
+    </section>
+    <ul id="errors" class="errors" aria-live="polite" aria-label="Validation errors"></ul>
+  </section>
+
+  <aside class="inspector" id="inspector" aria-label="Properties">
+    <h2>Properties</h2>
+  </aside>
+</main>
+
+<dialog id="file-picker" class="picker">
+  <div class="picker-head">
+    <h2 id="file-picker-title">Choose a file</h2>
+    <button class="btn ghost" data-action="close-file-picker">Close</button>
+  </div>
+  <div id="file-picker-body" class="picker-body"></div>
+</dialog>
+
+<dialog id="template-picker" class="picker">
+  <div class="picker-head">
+    <h2>Insert a variable</h2>
+    <button class="btn ghost" data-action="close-template-picker">Close</button>
+  </div>
+  <div id="template-picker-body" class="picker-body"></div>
+</dialog>
+
+<dialog id="new-picker" class="picker">
+  <div class="picker-head">
+    <h2>New pre-roll</h2>
+    <button class="btn ghost" data-action="close-new-picker">Close</button>
+  </div>
+  <div id="new-picker-body" class="picker-body"></div>
+</dialog>
+
+<div class="drawer" id="yaml-drawer" hidden>
+  <div class="preview-head">
+    <h2>manifest.yaml</h2>
+    <button id="copy-yaml" class="btn ghost">Copy</button>
+  </div>
+  <pre id="yaml"><code></code></pre>
+</div>
+
+<script src="providers.js"></script>
+<script src="util.js"></script>
+<script src="geometry.js"></script>
+<script src="interact.js"></script>
+<script src="state.js"></script>
+<script src="api.js"></script>
+<script src="stage.js"></script>
+<script src="pickers.js"></script>
+<script src="inspector.js"></script>
+<script src="timeline.js"></script>
+<script src="renderjob.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

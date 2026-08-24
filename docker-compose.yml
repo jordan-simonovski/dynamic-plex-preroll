@@ -1,9 +1,41 @@
-version: '3.8'
-
 services:
   plex-pre-roll:
     build:
       context: .
+      target: plex-pre-rolls
     env_file: .env
     volumes:
+      - ./manifests/:/build/manifests/
+      - ./media/:/build/media/
       - ./pre-roll-output/:/build/output/
+
+  # One-shot helper to mint a Plex token. Not started by `docker compose up`;
+  # run it explicitly:
+  #   docker compose run --rm plex-token -login you@example.com
+  plex-token:
+    build:
+      context: .
+      target: plex-token
+    profiles: ["tools"]
+
+  # The config UI runs from the SAME image as the renderer, because the render
+  # button executes plex-pre-rolls as a subprocess. It is the heavy image, but
+  # shipping a second slim one would mean the render button could never work.
+  preroll-ui:
+    build:
+      context: .
+      target: plex-pre-rolls
+    command: ["preroll-ui"]
+    env_file: .env
+    ports:
+      - "8382:8382"
+    volumes:
+      - ./manifests/:/build/manifests/
+      - ./media/:/build/media/
+      - ./pre-roll-output/:/build/output/
+    environment:
+      - MANIFEST_DIR=/build/manifests
+      - MEDIA_DIR=/build/media
+      - RENDER_BIN=/usr/local/bin/plex-pre-rolls
+      - RENDER_DIR=/build/output/.ui-renders
+      - WORK_DIR=/build

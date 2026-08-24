@@ -1,6 +1,7 @@
 package plexclient
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -55,7 +56,7 @@ func TestGetMostViewedContentSeparatesRequests(t *testing.T) {
 		HTTPClient:      server.Client(),
 	}
 
-	shows, movies, err := client.GetMostViewedContent()
+	shows, movies, err := client.GetMostViewedContent(context.Background())
 	if err != nil {
 		t.Fatalf("GetMostViewedContent() error: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestGetMostViewedContentNon200IsError(t *testing.T) {
 		HTTPClient: server.Client(),
 	}
 
-	if _, _, err := client.GetMostViewedContent(); err == nil {
+	if _, _, err := client.GetMostViewedContent(context.Background()); err == nil {
 		t.Fatal("expected error on non-200 response, got nil")
 	}
 }
@@ -112,7 +113,7 @@ func TestGetURLDoesNotMutateCallerParams(t *testing.T) {
 	}
 
 	params := url.Values{"limit": {"5"}}
-	resp, err := client.GetURL("/library/all/top", params)
+	resp, err := client.GetURL(context.Background(), "/library/all/top", params)
 	if err != nil {
 		t.Fatalf("GetURL error: %v", err)
 	}

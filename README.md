@@ -165,6 +165,71 @@ replaces, `original` keeps clip audio, `mix` blends). `audio.start` seeks into t
 track (seconds) so a manifest can drop in on a hook instead of the intro;
 `audio.fadeOut` is output-relative.
 
+## Pre-roll Studio (the config UI)
+
+`preroll-ui` is a visual editor for manifests. Run it and open <http://localhost:8382>.
+
+```bash
+docker compose up -d preroll-ui
+# or, locally:
+go run ./cmd/preroll-ui -manifest-dir manifests -media-dir media
+```
+
+**The three panes.** The left rail is the timeline: every scene, sized by its
+duration, click to select and drag to reorder. The centre is the stage: a live
+16:9 preview of the selected scene drawn with the same rules the renderer uses,
+so an element sits where you put it. Click an element to select it, drag to
+move it, drag the corner handle to resize. The right pane is the inspector,
+showing properties for whatever is selected — an element, the scene, a data
+source, or the pre-roll itself. The canonical YAML is still there behind the
+**YAML** button, with its live validation errors.
+
+**Keyboard.** Focus the stage and press Tab to cycle elements, arrows to nudge
+(Shift for ten pixels), Delete to remove, Escape to select the scene.
+
+**Configuration.**
+
+| Flag | Env | Default | What it does |
+| --- | --- | --- | --- |
+| `-addr` | `UI_ADDR` | `:8382` | Listen address |
+| `-manifest-dir` | `MANIFEST_DIR` | `manifests` | Where manifests are listed, loaded and saved |
+| `-media-dir` | `MEDIA_DIR` | `media` | Comma-separated roots the file picker may browse |
+| `-render-bin` | `RENDER_BIN` | found on PATH | The `plex-pre-rolls` binary the render button executes |
+| `-render-dir` | `RENDER_DIR` | `pre-roll-output/.ui-renders` | Scratch for UI-triggered renders |
+| `-work-dir` | `WORK_DIR` | the process's own | Working directory renders run in |
+
+The UI also reads the same `PLEX_*` variables as the renderer. With them it
+shows real titles and artwork on the stage and can test a data source against
+the live server; without them it shows placeholder data and says so.
+
+**Everything optional degrades.** No Plex connection: placeholder data, and the
+editor works normally. No media directory: the file picker explains that and
+the path fields still accept anything typed. No render binary: the render
+button is replaced by "Rendering unavailable". None of these stop you editing,
+validating or saving a manifest.
+
+`docker compose up -d preroll-ui` runs the same combined image as
+`plex-pre-roll`, so the render binary is always present there and
+`render:true` requires only that `.env` and `manifests/`/`media/` are mounted
+(the compose file already does this). Running `go run ./cmd/preroll-ui`
+locally needs `plex-pre-rolls` on `PATH` (or `-render-bin`) for the render
+button to appear at all.
+
+**Rendering from the UI** writes the manifest to the render scratch directory
+— never to the manifest directory the batch renderer globs — runs
+`plex-pre-rolls` as a subprocess, streams its output into the page, and plays
+the resulting mp4 inline. One render at a time.
+
+**Saving is fail-closed and atomic**: an invalid manifest is never written, and
+a valid one is written to a temp file and renamed over the target, so a batch
+render never sees a half-written file. The previous contents are kept as
+`<name>.yaml.bak`.
+
+The UI has no auth — it can read, write and delete files in `MANIFEST_DIR`. It
+only accepts requests addressed to `localhost` or a bare IP, so a malicious web
+page can't reach it via DNS rebinding, but that is the extent of it: keep it on
+your LAN and don't expose port 8382 to the internet.
+
 ## Configuration
 
 Configuration is read from the environment (Docker reads it from `.env`):
@@ -193,20 +258,24 @@ hard-coding them.
 ## Getting a Plex token
 
 `PLEX_TOKEN` is an authenticated session token for your Plex account. The
-`plex-token` CLI fetches one by signing in to plex.tv:
+`plex-token` helper fetches one by signing in to plex.tv. Run it through Docker
+so you don't need a Go toolchain:
 
 ```
-go run ./cmd/plex-token -login you@example.com
+docker compose run --rm plex-token -login you@example.com
 ```
 
 You'll be prompted for your password (input is hidden). If your account has
 two-factor auth enabled, pass the verification code:
 
 ```
-go run ./cmd/plex-token -login you@example.com -code 123456
+docker compose run --rm plex-token -login you@example.com -code 123456
 ```
 
-Only the token is written to stdout, so you can pipe it straight into `.env`:
+Only the token is printed, so copy it into `PLEX_TOKEN` in your `.env`. The
+first run builds a small image (no ImageMagick/ffmpeg); later runs are instant.
+
+If you do have Go installed, the same util runs directly:
 
 ```
 echo "PLEX_TOKEN=\"$(go run ./cmd/plex-token -login you@example.com)\"" >> .env
@@ -214,11 +283,26 @@ echo "PLEX_TOKEN=\"$(go run ./cmd/plex-token -login you@example.com)\"" >> .env
 
 ## Running tests
 
+There are two suites: the Go tests, and the config UI's browser code, which is
+checked by plain `node --test` (no npm, no build step). `make test` runs both:
+
+```
+make test
+```
+
 Everything except the ImageMagick layout interpreter (`internal/render`) and the
-`cmd` entrypoint is CGO-free. With ImageMagick installed, the whole suite runs:
+`cmd` entrypoint is CGO-free. With ImageMagick installed, the whole Go suite
+runs:
 
 ```
 go test ./...
+```
+
+The UI checks on their own — Node 22+ needs the glob, a bare directory argument
+is not expanded:
+
+```
+make test-js          # or: node --test 'internal/webui/*_test.js'
 ```
 
 Without ImageMagick, test the CGO-free packages directly (the `render` package
@@ -227,7 +311,7 @@ won't build without it):
 ```
 go test ./internal/manifest/... ./internal/templating/... ./internal/content/... \
   ./internal/configmanager/... ./internal/plexclient/... ./internal/providers/... \
-  ./internal/pipeline/... ./internal/engine/...
+  ./internal/pipeline/... ./internal/engine/... ./internal/webui/...
 ```
 
 The real rendering path has an opt-in smoke test (requires ImageMagick):

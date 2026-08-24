@@ -1,6 +1,7 @@
 package plexclient
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -30,13 +31,13 @@ func NewDiscoverClient(token configmanager.Secret, debug bool) *PlexClient {
 // released (Discover's /library/sections/watchlist/{filter} endpoint); params
 // pass through (libtype, sort, limit). Items carry Discover metadata: GUID and
 // absolute image URLs, but no local RatingKey.
-func (client *PlexClient) WatchlistItems(filter string, params url.Values) (content.Items, error) {
+func (client *PlexClient) WatchlistItems(ctx context.Context, filter string, params url.Values) (content.Items, error) {
 	if strings.TrimSpace(filter) == "" {
 		filter = "all"
 	}
 	path := "/library/sections/watchlist/" + filter
 	decoded := &itemsResponse{}
-	if err := client.getJSON(path, params, decoded); err != nil {
+	if err := client.getJSON(ctx, path, params, decoded); err != nil {
 		return nil, accountTokenHint(err)
 	}
 	return discoverItems(decoded.MediaContainer.Metadata), nil
@@ -45,9 +46,9 @@ func (client *PlexClient) WatchlistItems(filter string, params url.Values) (cont
 // HomeHubs returns the Discover home hub rows (trending, top watchlisted,
 // ...). The hub set is not a documented API surface; callers must select hubs
 // by identifier and handle absence.
-func (client *PlexClient) HomeHubs(params url.Values) ([]content.Hub, error) {
+func (client *PlexClient) HomeHubs(ctx context.Context, params url.Values) ([]content.Hub, error) {
 	var decoded hubsResponse
-	if err := client.getJSON("/hubs/sections/home", params, &decoded); err != nil {
+	if err := client.getJSON(ctx, "/hubs/sections/home", params, &decoded); err != nil {
 		return nil, accountTokenHint(err)
 	}
 	hubs := make([]content.Hub, 0, len(decoded.MediaContainer.Hub))

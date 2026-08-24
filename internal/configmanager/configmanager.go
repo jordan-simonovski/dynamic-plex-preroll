@@ -108,11 +108,22 @@ type Config struct {
 	PrerollMode PrerollMode `envconfig:"PLEX_PREROLL_MODE" default:"random"`
 }
 
-// MustReadConfig Returns a shallow copy of application configuration. Panics if the configuration is invalid.
-func MustReadConfig() Config {
+// ReadConfig returns the application configuration, or the reason it could not
+// be read. Callers that can run without Plex (the config UI) use this; the
+// batch renderer cannot, and uses MustReadConfig.
+func ReadConfig() (Config, error) {
 	conf := &Config{}
 	if err := envconfig.Process(envVarPrefix, conf); err != nil {
+		return Config{}, err
+	}
+	return *conf, nil
+}
+
+// MustReadConfig Returns a shallow copy of application configuration. Panics if the configuration is invalid.
+func MustReadConfig() Config {
+	conf, err := ReadConfig()
+	if err != nil {
 		panic(err)
 	}
-	return *conf
+	return conf
 }
